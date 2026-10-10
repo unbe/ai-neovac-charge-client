@@ -485,7 +485,7 @@ class NeoVacClient:
         """Renames an existing RFID badge."""
         return self._request(
             f"/mobile/api/user/rfid/{rfid_id}",
-            method="PUT",
+            method="PATCH",
             data={"rfidName": rfid_name},
         )
 
@@ -775,7 +775,26 @@ def main() -> None:
     rename_p.add_argument("--id", type=int, help="Charge Point ID override")
 
     # RFID commands
-    subparsers.add_parser("rfids", help="List registered RFID badges")
+    rfid_p = subparsers.add_parser("rfid", aliases=["rfids"], help="Manage registered RFID badges (show, add, rename, delete)")
+    rfid_sub = rfid_p.add_subparsers(dest="rfid_action", help="RFID action")
+
+    # rfid show / list
+    rfid_show_p = rfid_sub.add_parser("show", aliases=["list"], help="Show/list registered RFID badges (default)")
+    rfid_show_p.add_argument("--json", action="store_true", help="Output raw JSON")
+
+    # rfid add <tag> <name>
+    rfid_add_p = rfid_sub.add_parser("add", help="Register a new RFID badge")
+    rfid_add_p.add_argument("tag", help="Hardware UID hex string (e.g. 042D8E2A8C2590 or 98B607BD)")
+    rfid_add_p.add_argument("name", help="Display name for the badge")
+
+    # rfid rename <id> <new_name>
+    rfid_rename_p = rfid_sub.add_parser("rename", help="Rename an existing RFID badge")
+    rfid_rename_p.add_argument("id", type=int, help="RFID badge database ID")
+    rfid_rename_p.add_argument("name", help="New display name")
+
+    # rfid delete <id>
+    rfid_del_p = rfid_sub.add_parser("delete", aliases=["remove", "rm"], help="Delete an RFID badge")
+    rfid_del_p.add_argument("id", type=int, help="RFID badge database ID to delete")
 
     # Reports
     report_p = subparsers.add_parser("report", help="View charging history report")
@@ -848,10 +867,30 @@ def main() -> None:
             res = client.rename_station(args.name, charge_point_id=args.id)
             print(json.dumps(res, indent=2))
 
-        elif args.subcommand == "rfids":
-            rfids = client.list_rfids()
-            for r in rfids:
-                print(f"- {r.get('rfidName')} (Tag: {r.get('rfidTag')}, ID: {r.get('id')})")
+        elif args.subcommand in ("rfid", "rfids"):
+            action = getattr(args, "rfid_action", None) or "show"
+            if action in ("show", "list"):
+                rfids = client.list_rfids()
+                if getattr(args, "json", False):
+                    print(json.dumps(rfids, indent=2))
+                else:
+                    if not rfids:
+                        print("No RFID badges registered.")
+                    for r in rfids:
+                        print(f"- {r.get('rfidName')} (Tag: {r.get('rfidTag')}, ID: {r.get('id')})")
+            elif action == "add":
+                clean_tag = args.tag.replace(":", "").replace("-", "").replace(" ", "").upper()
+                res = client.add_rfid(rfid_tag=clean_tag, rfid_name=args.name)
+                print(f"Added RFID badge '{args.name}' ({clean_tag}):")
+                print(json.dumps(res, indent=2) if res else "Success.")
+            elif action == "rename":
+                res = client.update_rfid(rfid_id=args.id, rfid_name=args.name)
+                print(f"Renamed RFID badge ID {args.id} to '{args.name}':")
+                print(json.dumps(res, indent=2) if res else "Success.")
+            elif action in ("delete", "remove", "rm"):
+                res = client.delete_rfid(rfid_id=args.id)
+                print(f"Deleted RFID badge ID {args.id}:")
+                print(json.dumps(res, indent=2) if res else "Success.")
 
         elif args.subcommand == "report":
             if args.email:
