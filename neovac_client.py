@@ -766,6 +766,14 @@ def main() -> None:
     night_p.add_argument("state", choices=["on", "off"], help="Schedule state")
     night_p.add_argument("--id", type=int, help="Charge Point ID override")
 
+    plug_p = subparsers.add_parser("plug-and-charge", help="Configure plug-and-charge mode")
+    plug_p.add_argument("state", choices=["on", "off"], help="Mode state (on/off)")
+    plug_p.add_argument("--id", type=int, help="Charge Point ID override")
+
+    rename_p = subparsers.add_parser("rename", help="Set custom name for station")
+    rename_p.add_argument("name", help="New station name")
+    rename_p.add_argument("--id", type=int, help="Charge Point ID override")
+
     # RFID commands
     subparsers.add_parser("rfids", help="List registered RFID badges")
 
@@ -812,8 +820,9 @@ def main() -> None:
             print(f"Status:      {info.get('status')}")
             print(f"Connector:   {info.get('connectorZeroStatus')}")
             print(f"Online:      {info.get('isOnline')}")
-            print(f"Cable Lock:  {info.get('chargePointSettings', {}).get('permanentCableLockEnabled')}")
-            print(f"Night Mode:  {info.get('chargePointSettings', {}).get('nightChargingEnabled')}")
+            print(f"Cable Lock:     {info.get('chargePointSettings', {}).get('permanentCableLockEnabled')}")
+            print(f"Night Mode:     {info.get('chargePointSettings', {}).get('nightChargingEnabled')}")
+            print(f"Plug & Charge:  {info.get('chargePointSettings', {}).get('plugAndChargeEnabled')}")
 
         elif args.subcommand == "start":
             res = client.start_charging(charge_point_id=args.id, rfid_tag=args.rfid)
@@ -829,6 +838,14 @@ def main() -> None:
 
         elif args.subcommand == "night-charging":
             res = client.set_night_charging(args.state == "on", charge_point_id=args.id)
+            print(json.dumps(res, indent=2))
+
+        elif args.subcommand == "plug-and-charge":
+            res = client.set_plug_and_charge(args.state == "on", charge_point_id=args.id)
+            print(json.dumps(res, indent=2))
+
+        elif args.subcommand == "rename":
+            res = client.rename_station(args.name, charge_point_id=args.id)
             print(json.dumps(res, indent=2))
 
         elif args.subcommand == "rfids":
