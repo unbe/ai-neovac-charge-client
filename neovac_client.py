@@ -22,12 +22,56 @@ import hashlib
 import json
 from pathlib import Path
 import secrets
+import sys
 import time
 from typing import Any, Callable, Generator
 import urllib.error
 import urllib.parse
 import urllib.request
 import webbrowser
+
+
+class NeoVacAPIError(Exception):
+    """Raised when an API request fails with a non-2xx status code."""
+
+    def __init__(
+        self,
+        status_code: int,
+        message: str,
+        endpoint: str,
+        method: str,
+        raw_body: str,
+        data: dict[str, Any] | None = None,
+    ) -> None:
+        self.status_code = status_code
+        self.message = message
+        self.endpoint = endpoint
+        self.method = method
+        self.raw_body = raw_body
+        self.data = data or {}
+
+        # Build helpful human-friendly explanation
+        explanation = message
+        if message == "Rejected":
+            explanation = (
+                "Command 'Rejected' by the charging station.\n"
+                "Common reasons:\n"
+                "  • Vehicle is not plugged in, or charging cable is disconnected.\n"
+                "  • Station is already in an active transaction.\n"
+                "  • Station/Vehicle is in a suspended state (SuspendedEV / SuspendedEVSE).\n"
+                "  • The station has not finished reporting the previous session."
+            )
+        elif "UserChargePoint not found" in message:
+            explanation = "UserChargePoint not found. Check if the chargePointId is correct."
+        elif self.data.get("errors"):
+            field_errors = []
+            for field, errs in self.data["errors"].items():
+                err_str = ", ".join(errs) if isinstance(errs, list) else str(errs)
+                field_errors.append(f"{field}: {err_str}")
+            explanation = f"{message} ({'; '.join(field_errors)})"
+
+        self.explanation = explanation
+        super().__init__(f"[{method} {endpoint}] HTTP {status_code}: {explanation}")
 
 
 class NeoVacClient:
@@ -285,13 +329,37 @@ class NeoVacClient:
                 return json.loads(raw) if raw else None
         except urllib.error.HTTPError as err:
             if err.code == 401 and retry_on_401 and self.refresh_token:
-                self.refresh_access_token()
-                return self._request(
-                    endpoint, method=method, data=data, retry_on_401=False
-                )
+                try:
+                    self.refresh_access_token()
+                    return self._request(
+                        endpoint, method=method, data=data, retry_on_401=False
+                    )
+                except Exception:
+                    pass
+
             error_body = err.read().decode("utf-8", errors="ignore")
-            raise RuntimeError(
-                f"API Error {err.code} on {method} {endpoint}: {error_body}"
+            parsed_data = {}
+            error_msg = f"HTTP {err.code}"
+            try:
+                parsed = json.loads(error_body)
+                if isinstance(parsed, dict):
+                    parsed_data = parsed
+                    error_msg = (
+                        parsed.get("message")
+                        or parsed.get("error_description")
+                        or parsed.get("error")
+                        or str(parsed)
+                    )
+            except Exception:
+                error_msg = error_body.strip() or f"HTTP {err.code}"
+
+            raise NeoVacAPIError(
+                status_code=err.code,
+                message=error_msg,
+                endpoint=endpoint,
+                method=method,
+                raw_body=error_body,
+                data=parsed_data,
             ) from err
 
     # -------------------------------------------------------------------------
@@ -730,67 +798,75 @@ def main() -> None:
         parser.print_help()
         return
 
-    client = NeoVacClient()
+    try:
+        client = NeoVacClient()
 
-    if args.subcommand == "login":
-        client.interactive_login(open_browser=not args.no_browser)
+        if args.subcommand == "login":
+            client.interactive_login(open_browser=not args.no_browser)
 
-    elif args.subcommand == "status":
-        info = client.get_station_status()
-        print(f"Station:     {info.get('position')} ({info.get('neoVacId')})")
-        print(f"ID:          {info.get('chargePointId')}")
-        print(f"Serial:      {info.get('serialNumber')}")
-        print(f"Status:      {info.get('status')}")
-        print(f"Connector:   {info.get('connectorZeroStatus')}")
-        print(f"Online:      {info.get('isOnline')}")
-        print(f"Cable Lock:  {info.get('chargePointSettings', {}).get('permanentCableLockEnabled')}")
-        print(f"Night Mode:  {info.get('chargePointSettings', {}).get('nightChargingEnabled')}")
+        elif args.subcommand == "status":
+            info = client.get_station_status()
+            print(f"Station:     {info.get('position')} ({info.get('neoVacId')})")
+            print(f"ID:          {info.get('chargePointId')}")
+            print(f"Serial:      {info.get('serialNumber')}")
+            print(f"Status:      {info.get('status')}")
+            print(f"Connector:   {info.get('connectorZeroStatus')}")
+            print(f"Online:      {info.get('isOnline')}")
+            print(f"Cable Lock:  {info.get('chargePointSettings', {}).get('permanentCableLockEnabled')}")
+            print(f"Night Mode:  {info.get('chargePointSettings', {}).get('nightChargingEnabled')}")
 
-    elif args.subcommand == "start":
-        res = client.start_charging(charge_point_id=args.id, rfid_tag=args.rfid)
-        print(json.dumps(res, indent=2))
+        elif args.subcommand == "start":
+            res = client.start_charging(charge_point_id=args.id, rfid_tag=args.rfid)
+            print(json.dumps(res, indent=2))
 
-    elif args.subcommand == "stop":
-        res = client.stop_charging(charge_point_id=args.id)
-        print(json.dumps(res, indent=2))
+        elif args.subcommand == "stop":
+            res = client.stop_charging(charge_point_id=args.id)
+            print(json.dumps(res, indent=2))
 
-    elif args.subcommand == "cable-lock":
-        res = client.set_permanent_cable_lock(args.state == "on", charge_point_id=args.id)
-        print(json.dumps(res, indent=2))
+        elif args.subcommand == "cable-lock":
+            res = client.set_permanent_cable_lock(args.state == "on", charge_point_id=args.id)
+            print(json.dumps(res, indent=2))
 
-    elif args.subcommand == "night-charging":
-        res = client.set_night_charging(args.state == "on", charge_point_id=args.id)
-        print(json.dumps(res, indent=2))
+        elif args.subcommand == "night-charging":
+            res = client.set_night_charging(args.state == "on", charge_point_id=args.id)
+            print(json.dumps(res, indent=2))
 
-    elif args.subcommand == "rfids":
-        rfids = client.list_rfids()
-        for r in rfids:
-            print(f"- {r.get('rfidName')} (Tag: {r.get('rfidTag')}, ID: {r.get('id')})")
+        elif args.subcommand == "rfids":
+            rfids = client.list_rfids()
+            for r in rfids:
+                print(f"- {r.get('rfidName')} (Tag: {r.get('rfidTag')}, ID: {r.get('id')})")
 
-    elif args.subcommand == "report":
-        if args.email:
-            res = client.request_email_report(charge_point_id=args.id)
-            print("Email report requested:", json.dumps(res, indent=2))
-        else:
-            rep = client.get_charge_report(charge_point_id=args.id, days=args.days)
-            print(json.dumps(rep, indent=2))
+        elif args.subcommand == "report":
+            if args.email:
+                res = client.request_email_report(charge_point_id=args.id)
+                print("Email report requested:", json.dumps(res, indent=2))
+            else:
+                rep = client.get_charge_report(charge_point_id=args.id, days=args.days)
+                print(json.dumps(rep, indent=2))
 
-    elif args.subcommand == "analytics":
-        an = client.get_analytics(charge_point_id=args.id, resolution=args.resolution, days=args.days)
-        print(json.dumps(an, indent=2))
+        elif args.subcommand == "analytics":
+            an = client.get_analytics(charge_point_id=args.id, resolution=args.resolution, days=args.days)
+            print(json.dumps(an, indent=2))
 
-    elif args.subcommand == "telemetry":
-        print(f"Starting real-time telemetry stream for {args.duration}s... (Ctrl+C to stop)")
-        try:
+        elif args.subcommand == "telemetry":
+            print(f"Starting real-time telemetry stream for {args.duration}s... (Ctrl+C to stop)")
             for event in client.stream_telemetry(duration_seconds=args.duration):
                 print(f"[{event['timestamp']}] Event: {event['target']}")
                 print(json.dumps(event['arguments'], indent=2))
-        except KeyboardInterrupt:
-            print("\nTelemetry stream stopped.")
 
-    elif args.subcommand == "refresh":
-        client.refresh_access_token()
-        print("Access token refreshed successfully.")
+        elif args.subcommand == "refresh":
+            client.refresh_access_token()
+            print("Access token refreshed successfully.")
+
+    except NeoVacAPIError as err:
+        print(f"\n[API Error {err.status_code}] {err.explanation}", file=sys.stderr)
+        sys.exit(1)
+    except KeyboardInterrupt:
+        print("\nOperation cancelled.")
+        sys.exit(130)
+    except Exception as err:
+        print(f"\n[Error] {err}", file=sys.stderr)
+        sys.exit(1)
 
 
 if __name__ == "__main__":
