@@ -164,6 +164,8 @@ def _install_ha_stubs() -> None:
     ha_util_dt.parse_datetime = lambda s: (
         datetime.fromisoformat(s.replace("Z", "+00:00")) if s else None
     )
+    ha_util_dt.utcnow = lambda: datetime.now(timezone.utc)
+    ha_util_dt.as_utc = lambda dt: dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
     ha_util.dt = ha_util_dt
 
     ha_helpers_aiohttp.async_get_clientsession = lambda hass: None
@@ -951,6 +953,102 @@ class TestNeoVacIntegration(unittest.IsolatedAsyncioTestCase):
                         text_content,
                         f"Forbidden personal identifier '{ident}' found in {rel_path}!",
                     )
+
+    def test_session_duration_and_cost_dynamic_calculation(self) -> None:
+        """Verify dynamic duration and cost calculations for ongoing sessions with 0/null fields."""
+        _install_ha_stubs()
+        from datetime import timedelta
+        from custom_components.neovac_mycharge import sensor
+
+        coord = types.SimpleNamespace(data={"rfids": []})
+
+        # 1. Duration when provided directly as TimeSpan string
+        bundle_direct = {
+            "live_transaction": {"duration": "01:30:00"},
+            "pricing": {},
+        }
+        self.assertEqual(sensor._calculate_session_duration(coord, bundle_direct), 5400.0)
+
+        # 2. Duration when 0/null but startTime is 8 hours ago
+        now = datetime.now(timezone.utc)
+        start_8h_ago = (now - timedelta(hours=8)).isoformat()
+        bundle_ongoing = {
+            "live_transaction": {
+                "duration": "00:00:00",
+                "startTime": start_8h_ago,
+                "end": False,
+            },
+            "pricing": {},
+        }
+        calculated_dur = sensor._calculate_session_duration(coord, bundle_ongoing)
+        self.assertAlmostEqual(calculated_dur, 28800.0, delta=10.0)
+
+        # 3. Duration when completed with startTime and endTime
+        start_time = (now - timedelta(hours=3)).isoformat()
+        end_time = (now - timedelta(hours=1)).isoformat()
+        bundle_ended = {
+            "live_transaction": {
+                "duration": 0,
+                "startTime": start_time,
+                "endTime": end_time,
+                "end": True,
+            },
+            "pricing": {},
+        }
+        self.assertAlmostEqual(
+            sensor._calculate_session_duration(coord, bundle_ended), 7200.0, delta=2.0
+        )
+
+        # 4. Cost when provided directly (> 0)
+        bundle_cost_direct = {
+            "live_transaction": {
+                "chargePriceInChf": 2.50,
+                "accumulatedEnergyKwH": 8.0,
+                "pricePerkWh": 0.25,
+            },
+            "pricing": {},
+        }
+        self.assertEqual(sensor._calculate_session_cost(coord, bundle_cost_direct), 2.50)
+
+        # 5. Cost calculated from accumulated energy (4.5287 kWh) * live pricePerkWh (0.28)
+        bundle_cost_calc = {
+            "live_transaction": {
+                "chargePriceInChf": 0.0,
+                "accumulatedEnergyKwH": 4.5287000200807,
+                "pricePerkWh": 0.28,
+            },
+            "pricing": {},
+        }
+        # 4.5287000200807 * 0.28 = 1.268036 -> 1.27 CHF
+        self.assertEqual(sensor._calculate_session_cost(coord, bundle_cost_calc), 1.27)
+
+        # 6. Cost calculated from accumulated energy * pricing defaultTariffPrice
+        bundle_cost_tariff = {
+            "live_transaction": {
+                "chargePriceInChf": 0.0,
+                "accumulatedEnergyKwH": 5.0,
+            },
+            "pricing": {"defaultTariffPrice": 0.35},
+        }
+        self.assertEqual(sensor._calculate_session_cost(coord, bundle_cost_tariff), 1.75)
+
+    def test_error_handling_not_swallowed(self) -> None:
+        """Verify that parsing errors, disconnects, and API failures are logged rather than swallowed."""
+        _install_ha_stubs()
+        import logging
+        from custom_components.neovac_mycharge import api, coordinator, sensor
+
+        # Test duration parse error logs warning
+        with self.assertLogs("custom_components.neovac_mycharge.sensor", level="WARNING") as cm:
+            val = sensor._parse_duration_seconds("invalid-time-format")
+            self.assertIsNone(val)
+            self.assertTrue(any("Unexpected duration format" in msg for msg in cm.output))
+
+        # Test timestamp parse error logs warning
+        with self.assertLogs("custom_components.neovac_mycharge.sensor", level="WARNING") as cm:
+            val = sensor._parse_timestamp("not-a-valid-date")
+            self.assertIsNone(val)
+            self.assertTrue(any("Failed to parse timestamp" in msg for msg in cm.output))
 
 
 if __name__ == "__main__":

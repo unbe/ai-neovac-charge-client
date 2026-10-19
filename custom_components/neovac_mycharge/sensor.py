@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
@@ -23,6 +24,27 @@ from .const import ALL_STATION_STATUSES, DOMAIN, STATUS_CHARGING, STATUS_UNKNOWN
 from .coordinator import NeoVacDataUpdateCoordinator, _get_ci
 from .entity import NeoVacEntity
 
+_LOGGER = logging.getLogger(__name__)
+
+
+def _parse_timestamp(ts: Any) -> datetime | None:
+    """Parses an ISO 8601 string or datetime into a UTC datetime."""
+    if not ts or isinstance(ts, bool):
+        return None
+    if isinstance(ts, datetime):
+        return dt_util.as_utc(ts)
+    if isinstance(ts, str):
+        val = ts.strip()
+        if not val:
+            return None
+        try:
+            parsed = dt_util.parse_datetime(val)
+            if parsed is not None:
+                return dt_util.as_utc(parsed)
+        except Exception as err:
+            _LOGGER.warning("Failed to parse timestamp '%s': %s", ts, err)
+    return None
+
 
 def _parse_duration_seconds(raw_val: Any) -> float | None:
     """Converts a C# TimeSpan string ('HH:MM:SS' or 'd.HH:MM:SS') or numeric seconds to seconds."""
@@ -43,7 +65,8 @@ def _parse_duration_seconds(raw_val: Any) -> float | None:
             day_part, val = val.split(".", 1)
             try:
                 days = int(day_part)
-            except ValueError:
+            except ValueError as err:
+                _LOGGER.warning("Failed to parse days in duration '%s': %s", raw_val, err)
                 days = 0
         parts = val.split(":")
         if len(parts) == 3:
@@ -52,9 +75,121 @@ def _parse_duration_seconds(raw_val: Any) -> float | None:
                 minutes = int(parts[1])
                 seconds = float(parts[2])
                 return float(days * 86400 + hours * 3600 + minutes * 60 + seconds)
-            except ValueError:
+            except ValueError as err:
+                _LOGGER.warning("Failed to parse HMS in duration '%s': %s", raw_val, err)
                 return None
+        else:
+            _LOGGER.warning("Unexpected duration format '%s'", raw_val)
     return None
+
+
+def _calculate_session_energy(
+    coord: NeoVacDataUpdateCoordinator, b: dict[str, Any]
+) -> float:
+    """Extracts active session accumulated energy in kWh."""
+    live_tx = b.get("live_transaction", {})
+    if not live_tx:
+        return 0.0
+    raw_val = _get_ci(
+        live_tx,
+        "accumulatedEnergyKwH",
+        "chargeQuantityInkWh",
+        "totalEnergyKwh",
+        default=0.0,
+    )
+    try:
+        return round(float(raw_val), 3) if raw_val is not None else 0.0
+    except (ValueError, TypeError) as err:
+        _LOGGER.warning("Failed to parse session energy '%s': %s", raw_val, err)
+        return 0.0
+
+
+def _calculate_session_duration(
+    coord: NeoVacDataUpdateCoordinator, b: dict[str, Any]
+) -> float:
+    """Calculates active session duration in seconds from duration field or startTime."""
+    live_tx = b.get("live_transaction", {})
+    if not live_tx:
+        return 0.0
+
+    raw_dur = _get_ci(live_tx, "duration", "totalDuration", "sessionDuration")
+    parsed_dur = _parse_duration_seconds(raw_dur)
+    if parsed_dur is not None and parsed_dur > 0:
+        return parsed_dur
+
+    start_str = _get_ci(
+        live_tx,
+        "startTime",
+        "chargeProcessStartTime",
+        "transactionStartTime",
+        "startedAt",
+        "startDate",
+    )
+    if start_str:
+        start_dt = _parse_timestamp(start_str)
+        if start_dt:
+            has_end = bool(
+                _get_ci(live_tx, "end", "hasEnd", "transactionEnded", default=False)
+            )
+            end_str = _get_ci(
+                live_tx,
+                "endTime",
+                "chargeProcessEndTime",
+                "transactionEndTime",
+                "endedAt",
+                "endDate",
+            )
+            end_dt = (
+                _parse_timestamp(end_str)
+                if end_str and not isinstance(end_str, bool)
+                else None
+            )
+            if end_dt:
+                diff = (end_dt - start_dt).total_seconds()
+                return max(0.0, float(round(diff)))
+            elif not has_end:
+                now = dt_util.utcnow()
+                diff = (now - start_dt).total_seconds()
+                return max(0.0, float(round(diff)))
+
+    return parsed_dur if parsed_dur is not None else 0.0
+
+
+def _calculate_session_cost(
+    coord: NeoVacDataUpdateCoordinator, b: dict[str, Any]
+) -> float:
+    """Calculates active session cost in CHF from price field or energy * tariff."""
+    live_tx = b.get("live_transaction", {})
+    if not live_tx:
+        return 0.0
+
+    raw_cost = _get_ci(live_tx, "chargePriceInChf", "totalPrice", "costChf")
+    if raw_cost is not None:
+        try:
+            val = float(raw_cost)
+            if val > 0:
+                return round(val, 2)
+        except (ValueError, TypeError):
+            _LOGGER.warning("Failed to parse chargePriceInChf '%s' as float", raw_cost)
+
+    # Fallback: calculate from accumulated energy * pricePerkWh or defaultTariffPrice
+    energy = _calculate_session_energy(coord, b)
+    rate = _get_ci(live_tx, "pricePerkWh") or _get_ci(
+        b.get("pricing", {}), "defaultTariffPrice", "pricePerkWh"
+    )
+    if energy > 0 and rate is not None:
+        try:
+            return round(energy * float(rate), 2)
+        except (ValueError, TypeError) as err:
+            _LOGGER.warning("Failed to compute session cost with rate '%s': %s", rate, err)
+
+    if raw_cost is not None:
+        try:
+            return float(raw_cost)
+        except (ValueError, TypeError):
+            pass
+
+    return 0.0
 
 
 def _get_report_sessions(report: dict[str, Any]) -> list[dict[str, Any]]:
@@ -186,16 +321,13 @@ SENSOR_DESCRIPTIONS: tuple[NeoVacSensorEntityDescription, ...] = (
         state_class=SensorStateClass.TOTAL_INCREASING,
         suggested_display_precision=2,
         icon="mdi:battery-charging-high",
-        value_fn=lambda coord, b: (
-            float(
-                _get_ci(
-                    b.get("live_transaction", {}),
-                    "accumulatedEnergyKwH",
-                    "chargeQuantityInkWh",
-                    default=0.0,
-                )
-            )
-        ),
+        value_fn=_calculate_session_energy,
+        attr_fn=lambda coord, b: {
+            "transaction_id": _get_ci(
+                b.get("live_transaction", {}), "transactionId"
+            ),
+            "rfid_tag": _get_ci(b.get("live_transaction", {}), "rfidTag"),
+        },
     ),
     NeoVacSensorEntityDescription(
         key="session_cost",
@@ -206,16 +338,39 @@ SENSOR_DESCRIPTIONS: tuple[NeoVacSensorEntityDescription, ...] = (
         state_class=SensorStateClass.TOTAL,
         suggested_display_precision=2,
         icon="mdi:cash-multiple",
-        value_fn=lambda coord, b: (
-            float(
-                _get_ci(
-                    b.get("live_transaction", {}),
-                    "chargePriceInChf",
-                    "totalPrice",
-                    default=0.0,
+        value_fn=_calculate_session_cost,
+        attr_fn=lambda coord, b: {
+            "price_per_kwh": (
+                _get_ci(b.get("live_transaction", {}), "pricePerkWh")
+                or _get_ci(
+                    b.get("pricing", {}), "defaultTariffPrice", "pricePerkWh"
                 )
-            )
-        ),
+            ),
+            "calculated": (
+                bool(
+                    float(
+                        _get_ci(
+                            b.get("live_transaction", {}),
+                            "chargePriceInChf",
+                            default=0.0,
+                        )
+                        or 0.0
+                    )
+                    == 0.0
+                )
+                and bool(
+                    float(
+                        _get_ci(
+                            b.get("live_transaction", {}),
+                            "accumulatedEnergyKwH",
+                            default=0.0,
+                        )
+                        or 0.0
+                    )
+                    > 0.0
+                )
+            ),
+        },
     ),
     NeoVacSensorEntityDescription(
         key="session_duration",
@@ -225,9 +380,21 @@ SENSOR_DESCRIPTIONS: tuple[NeoVacSensorEntityDescription, ...] = (
         native_unit_of_measurement=UnitOfTime.SECONDS,
         state_class=SensorStateClass.MEASUREMENT,
         icon="mdi:timer-outline",
-        value_fn=lambda coord, b: _parse_duration_seconds(
-            _get_ci(b.get("live_transaction", {}), "duration", default=0)
-        ),
+        value_fn=_calculate_session_duration,
+        attr_fn=lambda coord, b: {
+            "start_time": _get_ci(
+                b.get("live_transaction", {}),
+                "startTime",
+                "chargeProcessStartTime",
+                "startedAt",
+            ),
+            "end_time": _get_ci(
+                b.get("live_transaction", {}),
+                "endTime",
+                "chargeProcessEndTime",
+                "endedAt",
+            ),
+        },
     ),
     NeoVacSensorEntityDescription(
         key="active_transaction_id",

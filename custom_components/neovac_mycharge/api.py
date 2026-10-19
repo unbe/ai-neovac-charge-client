@@ -326,8 +326,23 @@ class NeoVacAsyncClient:
                             or parsed.get("error")
                             or str(parsed)
                         )
-                except Exception:
+                except Exception as err:
+                    _LOGGER.warning(
+                        "Failed to parse error response JSON for %s %s: %s (body preview: %s)",
+                        method,
+                        endpoint,
+                        err,
+                        raw_text[:200],
+                    )
                     error_msg = raw_text.strip() or f"HTTP {resp.status}"
+
+                _LOGGER.error(
+                    "NeoVac API request failed [%s %s]: %s (status %s)",
+                    method,
+                    endpoint,
+                    error_msg,
+                    resp.status,
+                )
 
                 raise NeoVacApiError(
                     status_code=resp.status,
@@ -342,7 +357,14 @@ class NeoVacAsyncClient:
                 return None
             try:
                 return json.loads(raw_text)
-            except json.JSONDecodeError:
+            except json.JSONDecodeError as err:
+                _LOGGER.warning(
+                    "Non-JSON response from [%s %s]: %s (body preview: %s)",
+                    method,
+                    endpoint,
+                    err,
+                    raw_text[:200],
+                )
                 return raw_text
 
     # -------------------------------------------------------------------------
@@ -587,8 +609,12 @@ class NeoVacAsyncClient:
                 payload = json.loads(raw_bytes.decode("utf-8"))
                 if isinstance(payload, dict) and payload.get("pdfBytes"):
                     return base64.b64decode(payload["pdfBytes"])
-            except Exception:
-                pass
+            except Exception as err:
+                _LOGGER.warning(
+                    "Failed to decode non-PDF invoice payload for ID %s: %s",
+                    invoice_id,
+                    err,
+                )
         return raw_bytes
 
     async def async_get_guest_invitations(
@@ -672,8 +698,22 @@ class NeoVacAsyncClient:
             if first_msg.type == aiohttp.WSMsgType.TEXT:
                 for chunk in first_msg.data.split(RECORD_SEPARATOR):
                     if chunk.strip():
-                        h_obj = json.loads(chunk)
+                        try:
+                            h_obj = json.loads(chunk)
+                        except json.JSONDecodeError as err:
+                            _LOGGER.warning(
+                                "SignalR handshake invalid JSON on hub '%s': %s (chunk: %s)",
+                                hub_name,
+                                err,
+                                chunk[:200],
+                            )
+                            continue
                         if h_obj.get("error"):
+                            _LOGGER.error(
+                                "SignalR handshake error on hub '%s': %s",
+                                hub_name,
+                                h_obj["error"],
+                            )
                             raise NeoVacApiError(
                                 status_code=400,
                                 message=f"SignalR handshake error: {h_obj['error']}",
@@ -711,6 +751,12 @@ class NeoVacAsyncClient:
                     aiohttp.WSMsgType.CLOSING,
                     aiohttp.WSMsgType.ERROR,
                 ):
+                    _LOGGER.warning(
+                        "SignalR WebSocket connection closed or error on hub '%s': type=%s data=%s",
+                        hub_name,
+                        msg.type,
+                        msg.data,
+                    )
                     break
 
                 if msg.type in (aiohttp.WSMsgType.TEXT, aiohttp.WSMsgType.BINARY):
@@ -726,19 +772,39 @@ class NeoVacAsyncClient:
                             continue
                         try:
                             payload = json.loads(frame)
-                        except json.JSONDecodeError:
+                        except json.JSONDecodeError as err:
+                            _LOGGER.warning(
+                                "SignalR JSON decode error on hub '%s': %s (frame preview: %s)",
+                                hub_name,
+                                err,
+                                frame[:200],
+                            )
                             continue
 
                         msg_type = payload.get("type")
                         if msg_type == 1:  # Invocation
                             target = payload.get("target", "")
                             args = payload.get("arguments", [])
-                            res = event_callback(target, args)
-                            if asyncio.iscoroutine(res):
-                                await res
+                            try:
+                                res = event_callback(target, args)
+                                if asyncio.iscoroutine(res):
+                                    await res
+                            except Exception as err:
+                                _LOGGER.error(
+                                    "Error in SignalR event callback for '%s' on hub '%s': %s",
+                                    target,
+                                    hub_name,
+                                    err,
+                                    exc_info=True,
+                                )
                         elif msg_type == 6:  # Ping
                             await ws.send_str(
                                 json.dumps({"type": 6}) + RECORD_SEPARATOR
                             )
                         elif msg_type == 7:  # Close
+                            _LOGGER.warning(
+                                "SignalR server sent Close message (type 7) on hub '%s': %s",
+                                hub_name,
+                                payload,
+                            )
                             return

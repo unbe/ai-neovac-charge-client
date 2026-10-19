@@ -134,7 +134,7 @@ class NeoVacDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             try:
                 listener(event_type, payload)
             except Exception as err:
-                _LOGGER.debug("Error in event listener for CP %s: %s", cp_id, err)
+                _LOGGER.error("Error in event listener for CP %s (%s): %s", cp_id, event_type, err, exc_info=True)
 
     def _check_and_emit_status_transitions(
         self,
@@ -186,11 +186,19 @@ class NeoVacDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self.client.async_get_notification_settings(),
             return_exceptions=True,
         )
-        if isinstance(results[0], list):
+        if isinstance(results[0], Exception):
+            _LOGGER.warning("Error fetching RFIDs: %s", results[0])
+        elif isinstance(results[0], list):
             rfids = results[0]
-        if isinstance(results[1], list):
+
+        if isinstance(results[1], Exception):
+            _LOGGER.warning("Error fetching invoices: %s", results[1])
+        elif isinstance(results[1], list):
             invoices = results[1]
-        if isinstance(results[2], dict):
+
+        if isinstance(results[2], Exception):
+            _LOGGER.warning("Error fetching notification settings: %s", results[2])
+        elif isinstance(results[2], dict):
             notification_settings = results[2]
 
         charge_points: dict[int, dict[str, Any]] = {}
@@ -215,10 +223,37 @@ class NeoVacDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     self.client.async_get_guest_invitations(cp_id),
                     return_exceptions=True,
                 )
-                report = cp_tasks[0] if isinstance(cp_tasks[0], dict) else {}
-                analytics = cp_tasks[1] if isinstance(cp_tasks[1], dict) else {}
-                pricing = cp_tasks[2] if isinstance(cp_tasks[2], dict) else {}
-                invitations = cp_tasks[3] if isinstance(cp_tasks[3], list) else []
+                if isinstance(cp_tasks[0], Exception):
+                    _LOGGER.warning("Error fetching charge report for station %s: %s", cp_id, cp_tasks[0])
+                    report = {}
+                elif isinstance(cp_tasks[0], dict):
+                    report = cp_tasks[0]
+                else:
+                    report = {}
+
+                if isinstance(cp_tasks[1], Exception):
+                    _LOGGER.warning("Error fetching analytics for station %s: %s", cp_id, cp_tasks[1])
+                    analytics = {}
+                elif isinstance(cp_tasks[1], dict):
+                    analytics = cp_tasks[1]
+                else:
+                    analytics = {}
+
+                if isinstance(cp_tasks[2], Exception):
+                    _LOGGER.warning("Error fetching pricing for station %s: %s", cp_id, cp_tasks[2])
+                    pricing = {}
+                elif isinstance(cp_tasks[2], dict):
+                    pricing = cp_tasks[2]
+                else:
+                    pricing = {}
+
+                if isinstance(cp_tasks[3], Exception):
+                    _LOGGER.warning("Error fetching guest invitations for station %s: %s", cp_id, cp_tasks[3])
+                    invitations = []
+                elif isinstance(cp_tasks[3], list):
+                    invitations = cp_tasks[3]
+                else:
+                    invitations = []
 
                 status = _get_ci(cp, "status") or _get_ci(cp, "connectorZeroStatus")
                 self._check_and_emit_status_transitions(cp_id, status)
@@ -228,6 +263,11 @@ class NeoVacDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     if self.data
                     else {}
                 )
+
+                # Check if station metadata contains active transaction details
+                active_tx = _get_ci(cp, "activeTransaction", "transaction", "currentTransaction")
+                if isinstance(active_tx, dict) and not self._live_transactions.get(cp_id):
+                    self._live_transactions[cp_id] = active_tx
 
                 charge_points[cp_id] = {
                     "info": {
@@ -299,13 +339,23 @@ class NeoVacDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 backoff = 5
             except asyncio.CancelledError:
                 break
-            except NeoVacAuthError:
+            except NeoVacAuthError as err:
+                _LOGGER.warning(
+                    "SignalR auth token expired on hub '%s' (%s), attempting refresh",
+                    hub_name,
+                    err,
+                )
                 try:
                     await self.client.async_refresh_access_token()
-                except Exception as err:
-                    _LOGGER.warning("SignalR auth refresh failed (%s): %s", hub_name, err)
+                except Exception as refresh_err:
+                    _LOGGER.error(
+                        "SignalR auth refresh failed on hub '%s': %s",
+                        hub_name,
+                        refresh_err,
+                        exc_info=True,
+                    )
             except Exception as err:
-                _LOGGER.debug(
+                _LOGGER.warning(
                     "SignalR hub '%s' disconnected (%s), reconnecting in %ss",
                     hub_name,
                     err,
@@ -326,133 +376,142 @@ class NeoVacDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if not self.data or not arguments:
             return
 
-        first_arg = arguments[0] if isinstance(arguments[0], dict) else {}
-        charge_points = self.data.get("charge_points", {})
-        if not charge_points:
-            return
-
-        # Resolve target charge_point_id from payload (or default to single station)
-        raw_cp_id = _get_ci(first_arg, "chargePointId")
-        serial = _get_ci(
-            first_arg, "chargePointSerialNumber", "chargePointSerialNo", "serialNumber"
-        )
-        cp_id: int | None = int(raw_cp_id) if raw_cp_id is not None else None
-
-        if cp_id is None and serial:
-            for candidate_id, cp_bundle in charge_points.items():
-                if _get_ci(cp_bundle.get("info", {}), "serialNumber") == serial:
-                    cp_id = candidate_id
-                    break
-
-        if cp_id is None and len(charge_points) == 1:
-            cp_id = next(iter(charge_points.keys()))
-
-        if cp_id is None or cp_id not in charge_points:
-            return
-
-        cp_bundle = charge_points[cp_id]
-        cp_info = cp_bundle["info"]
-
-        if target == "OnTransactionReport":
-            live_tx = {**self._live_transactions.get(cp_id, {}), **first_arg}
-            has_end = bool(_get_ci(first_arg, "end", "hasEnd", "transactionEnded", default=False))
-            tx_status = _get_ci(first_arg, "status", "ocppStatus")
-
-            if has_end:
-                live_tx["currentPowerKw"] = 0.0
-                self._live_transactions[cp_id] = live_tx
-                cp_bundle["live_transaction"] = live_tx
-                self._check_and_emit_status_transitions(
-                    cp_id,
-                    tx_status or STATUS_FINISHING,
-                    extra={"transaction_id": _get_ci(first_arg, "transactionId")},
-                )
-                self._emit_event(cp_id, EVENT_CHARGING_STOPPED, live_tx)
-                self.async_set_updated_data(self.data)
-                # Refresh historical reports so last session & 30-day totals update
-                self.hass.async_create_task(self.async_request_refresh())
+        try:
+            first_arg = arguments[0] if isinstance(arguments[0], dict) else {}
+            charge_points = self.data.get("charge_points", {})
+            if not charge_points:
                 return
 
-            if tx_status:
-                cp_info["status"] = tx_status
-                cp_info["connectorZeroStatus"] = tx_status
-            elif _get_ci(first_arg, "currentPowerKw", default=0) > 0:
+            # Resolve target charge_point_id from payload (or default to single station)
+            raw_cp_id = _get_ci(first_arg, "chargePointId")
+            serial = _get_ci(
+                first_arg, "chargePointSerialNumber", "chargePointSerialNo", "serialNumber"
+            )
+            cp_id: int | None = int(raw_cp_id) if raw_cp_id is not None else None
+
+            if cp_id is None and serial:
+                for candidate_id, cp_bundle in charge_points.items():
+                    if _get_ci(cp_bundle.get("info", {}), "serialNumber") == serial:
+                        cp_id = candidate_id
+                        break
+
+            if cp_id is None and len(charge_points) == 1:
+                cp_id = next(iter(charge_points.keys()))
+
+            if cp_id is None or cp_id not in charge_points:
+                return
+
+            cp_bundle = charge_points[cp_id]
+            cp_info = cp_bundle["info"]
+
+            if target == "OnTransactionReport":
+                live_tx = {**self._live_transactions.get(cp_id, {}), **first_arg}
+                has_end = bool(_get_ci(first_arg, "end", "hasEnd", "transactionEnded", default=False))
+                tx_status = _get_ci(first_arg, "status", "ocppStatus")
+
+                if has_end:
+                    live_tx["currentPowerKw"] = 0.0
+                    self._live_transactions[cp_id] = live_tx
+                    cp_bundle["live_transaction"] = live_tx
+                    self._check_and_emit_status_transitions(
+                        cp_id,
+                        tx_status or STATUS_FINISHING,
+                        extra={"transaction_id": _get_ci(first_arg, "transactionId")},
+                    )
+                    self._emit_event(cp_id, EVENT_CHARGING_STOPPED, live_tx)
+                    self.async_set_updated_data(self.data)
+                    # Refresh historical reports so last session & 30-day totals update
+                    self.hass.async_create_task(self.async_request_refresh())
+                    return
+
+                if tx_status:
+                    cp_info["status"] = tx_status
+                    cp_info["connectorZeroStatus"] = tx_status
+                elif _get_ci(first_arg, "currentPowerKw", default=0) > 0:
+                    cp_info["status"] = STATUS_CHARGING
+
+                self._live_transactions[cp_id] = live_tx
+                cp_bundle["live_transaction"] = live_tx
+
+                self._check_and_emit_status_transitions(
+                    cp_id,
+                    cp_info.get("status"),
+                    error_code=_get_ci(first_arg, "errorCode"),
+                    error_charging=bool(_get_ci(first_arg, "errorCharging", default=False)),
+                    extra=live_tx,
+                )
+                self._emit_event(cp_id, EVENT_TRANSACTION_REPORT, live_tx)
+                self.async_set_updated_data(self.data)
+
+            elif target == "StartTransactionNotification":
                 cp_info["status"] = STATUS_CHARGING
+                self._check_and_emit_status_transitions(cp_id, STATUS_CHARGING, extra=first_arg)
+                self._emit_event(cp_id, EVENT_CHARGING_STARTED, first_arg)
+                self.async_set_updated_data(self.data)
 
-            self._live_transactions[cp_id] = live_tx
-            cp_bundle["live_transaction"] = live_tx
-
-            self._check_and_emit_status_transitions(
-                cp_id,
-                cp_info.get("status"),
-                error_code=_get_ci(first_arg, "errorCode"),
-                error_charging=bool(_get_ci(first_arg, "errorCharging", default=False)),
-                extra=live_tx,
-            )
-            self._emit_event(cp_id, EVENT_TRANSACTION_REPORT, live_tx)
-            self.async_set_updated_data(self.data)
-
-        elif target == "StartTransactionNotification":
-            cp_info["status"] = STATUS_CHARGING
-            self._check_and_emit_status_transitions(cp_id, STATUS_CHARGING, extra=first_arg)
-            self._emit_event(cp_id, EVENT_CHARGING_STARTED, first_arg)
-            self.async_set_updated_data(self.data)
-
-        elif target == "StopTransactionNotification":
-            if cp_id in self._live_transactions:
-                self._live_transactions[cp_id]["currentPowerKw"] = 0.0
-            self._check_and_emit_status_transitions(cp_id, STATUS_FINISHING, extra=first_arg)
-            self._emit_event(cp_id, EVENT_CHARGING_STOPPED, first_arg)
-            self.async_set_updated_data(self.data)
-            self.hass.async_create_task(self.async_request_refresh())
-
-        elif target == "PriceUpdate":
-            cp_bundle["pricing"] = {**cp_bundle.get("pricing", {}), **first_arg}
-            self._emit_event(cp_id, EVENT_PRICE_UPDATED, first_arg)
-            self.async_set_updated_data(self.data)
-
-        elif target in (
-            "ReceiveConnectorTransactionUpdate",
-            "ReceiveChargePointSiteStatusUpdate",
-            "ReceiveChargePointSiteStatusFullUpdate",
-            "ConnectorChanged",
-            "StatusNotificationReceivedIntegrationEvent",
-        ):
-            new_status = _get_ci(first_arg, "status", "ocppStatus", "connectorState")
-            if new_status:
-                cp_info["status"] = new_status
-                cp_info["connectorZeroStatus"] = new_status
-                if new_status != STATUS_CHARGING and cp_id in self._live_transactions:
+            elif target == "StopTransactionNotification":
+                if cp_id in self._live_transactions:
                     self._live_transactions[cp_id]["currentPowerKw"] = 0.0
-            is_online = _get_ci(first_arg, "isOnline")
-            if is_online is not None:
-                cp_info["isOnline"] = bool(is_online)
+                self._check_and_emit_status_transitions(cp_id, STATUS_FINISHING, extra=first_arg)
+                self._emit_event(cp_id, EVENT_CHARGING_STOPPED, first_arg)
+                self.async_set_updated_data(self.data)
+                self.hass.async_create_task(self.async_request_refresh())
 
-            self._check_and_emit_status_transitions(
-                cp_id,
-                new_status or cp_info.get("status"),
-                error_code=_get_ci(first_arg, "errorCode"),
-                error_charging=bool(_get_ci(first_arg, "errorCharging", default=False)),
-                extra=first_arg,
+            elif target == "PriceUpdate":
+                cp_bundle["pricing"] = {**cp_bundle.get("pricing", {}), **first_arg}
+                self._emit_event(cp_id, EVENT_PRICE_UPDATED, first_arg)
+                self.async_set_updated_data(self.data)
+
+            elif target in (
+                "ReceiveConnectorTransactionUpdate",
+                "ReceiveChargePointSiteStatusUpdate",
+                "ReceiveChargePointSiteStatusFullUpdate",
+                "ConnectorChanged",
+                "StatusNotificationReceivedIntegrationEvent",
+            ):
+                new_status = _get_ci(first_arg, "status", "ocppStatus", "connectorState")
+                if new_status:
+                    cp_info["status"] = new_status
+                    cp_info["connectorZeroStatus"] = new_status
+                    if new_status != STATUS_CHARGING and cp_id in self._live_transactions:
+                        self._live_transactions[cp_id]["currentPowerKw"] = 0.0
+                is_online = _get_ci(first_arg, "isOnline")
+                if is_online is not None:
+                    cp_info["isOnline"] = bool(is_online)
+
+                self._check_and_emit_status_transitions(
+                    cp_id,
+                    new_status or cp_info.get("status"),
+                    error_code=_get_ci(first_arg, "errorCode"),
+                    error_charging=bool(_get_ci(first_arg, "errorCharging", default=False)),
+                    extra=first_arg,
+                )
+                self.async_set_updated_data(self.data)
+
+            elif target in (
+                "ConnectorChangedPlugAndCharge",
+                "ConnectorChangedNightCharging",
+                "ConnectorChangedPermanentCableLock",
+                "ChargePointChangedPermanentCableLock",
+            ):
+                settings = cp_info.setdefault("chargePointSettings", {})
+                pnc = _get_ci(first_arg, "plugAndCharge", "plugAndChargeEnabled")
+                if pnc is not None:
+                    settings["plugAndChargeEnabled"] = bool(pnc)
+                night = _get_ci(first_arg, "newNightCharging", "nightChargingEnabled")
+                if night is not None:
+                    settings["nightChargingEnabled"] = bool(night)
+                lock = _get_ci(first_arg, "permanentCableLock", "permanentCableLockEnabled")
+                if lock is not None:
+                    settings["permanentCableLockEnabled"] = bool(lock)
+
+                self._emit_event(cp_id, EVENT_SETTINGS_CHANGED, first_arg)
+                self.async_set_updated_data(self.data)
+        except Exception as err:
+            _LOGGER.error(
+                "Error processing SignalR event '%s' with arguments %s: %s",
+                target,
+                arguments,
+                err,
+                exc_info=True,
             )
-            self.async_set_updated_data(self.data)
-
-        elif target in (
-            "ConnectorChangedPlugAndCharge",
-            "ConnectorChangedNightCharging",
-            "ConnectorChangedPermanentCableLock",
-            "ChargePointChangedPermanentCableLock",
-        ):
-            settings = cp_info.setdefault("chargePointSettings", {})
-            pnc = _get_ci(first_arg, "plugAndCharge", "plugAndChargeEnabled")
-            if pnc is not None:
-                settings["plugAndChargeEnabled"] = bool(pnc)
-            night = _get_ci(first_arg, "newNightCharging", "nightChargingEnabled")
-            if night is not None:
-                settings["nightChargingEnabled"] = bool(night)
-            lock = _get_ci(first_arg, "permanentCableLock", "permanentCableLockEnabled")
-            if lock is not None:
-                settings["permanentCableLockEnabled"] = bool(lock)
-
-            self._emit_event(cp_id, EVENT_SETTINGS_CHANGED, first_arg)
-            self.async_set_updated_data(self.data)
