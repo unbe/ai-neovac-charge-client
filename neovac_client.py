@@ -876,14 +876,9 @@ class NeoVacClient:
     ) -> dict[str, Any]:
         """Retrieves active electricity tariffs and connector pricing."""
         cpid = charge_point_id or self.default_charge_point_id
-        try:
-            res = self._request(
-                f"/mobile/api/charge-point/{cpid}/pricing-details", method="GET"
-            )
-        except Exception:
-            res = self._request(
-                f"/mobile/api/pricing/{cpid}/{connector_number}", method="GET"
-            )
+        res = self._request(
+            f"/mobile/api/charge-point/{cpid}/pricing-details", method="GET"
+        )
         if isinstance(res, dict) and "pricingDetails" in res and isinstance(res["pricingDetails"], dict):
             return {**res, **res["pricingDetails"]}
         return res if isinstance(res, dict) else {}

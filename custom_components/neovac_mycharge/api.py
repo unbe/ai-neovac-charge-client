@@ -588,20 +588,10 @@ class NeoVacAsyncClient:
         self, charge_point_id: int, connector_number: int = 1
     ) -> dict[str, Any]:
         """Fetches active electricity tariffs and connector pricing."""
-        try:
-            res = await self._request(
-                f"/mobile/api/charge-point/{int(charge_point_id)}/pricing-details",
-                method="GET",
-                suppress_status_log=(404,),
-            )
-        except NeoVacApiError as err:
-            if err.status_code == 404:
-                res = await self._request(
-                    f"/mobile/api/pricing/{int(charge_point_id)}/{int(connector_number)}",
-                    method="GET",
-                )
-            else:
-                raise
+        res = await self._request(
+            f"/mobile/api/charge-point/{int(charge_point_id)}/pricing-details",
+            method="GET",
+        )
         if isinstance(res, dict) and "pricingDetails" in res and isinstance(res["pricingDetails"], dict):
             return {**res, **res["pricingDetails"]}
         return res if isinstance(res, dict) else {}
