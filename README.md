@@ -150,7 +150,7 @@ python3 neovac_client.py plug-and-charge on
 python3 neovac_client.py rename "Station 1"
 
 # Manage RFID badges
-python3 neovac_client.py rfid show
+python3 neovac_client.py rfid list
 python3 neovac_client.py rfid add 01020304050607 "Primary Badge"
 
 # Stream real-time SignalR telemetry (WebSocket or Long-Polling)
@@ -161,7 +161,7 @@ python3 neovac_client.py pricing
 
 # Invoices & billing PDF download
 python3 neovac_client.py invoices list
-python3 neovac_client.py invoices download <invoice_id> -o invoice.pdf
+python3 neovac_client.py invoices download <invoice_id> --output invoice.pdf
 
 # View account profile, guest invitations, and notifications
 python3 neovac_client.py account

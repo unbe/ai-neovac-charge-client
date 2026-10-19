@@ -866,7 +866,7 @@ class TestNeoVacIntegration(unittest.IsolatedAsyncioTestCase):
             (["neovac_client.py", "account"], "John Doe"),
             (["neovac_client.py", "pricing"], "Standard Night"),
             (["neovac_client.py", "invoices", "list"], "INV-2026-001"),
-            (["neovac_client.py", "invoices", "download", "999", "-o", "/tmp/test.pdf"], "Downloaded invoice 999"),
+            (["neovac_client.py", "invoices", "download", "999", "--output", "/tmp/test.pdf"], "Downloaded invoice 999"),
             (["neovac_client.py", "guests"], "guest@example.com"),
             (["neovac_client.py", "notifications"], "emailMonthlyReport"),
             (["neovac_client.py", "report", "--days", "7"], "report"),

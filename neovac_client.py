@@ -949,7 +949,7 @@ def main() -> None:
     status_p.add_argument("--json", action="store_true", help="Output raw JSON")
 
     # Account / User
-    account_p = subparsers.add_parser("account", aliases=["user", "info"], help="Get user account and site overview")
+    account_p = subparsers.add_parser("account", help="Get user account and site overview")
     account_p.add_argument("--json", action="store_true", help="Output raw JSON")
 
     # Start / Stop
@@ -978,12 +978,12 @@ def main() -> None:
     rename_p.add_argument("--id", type=int, help="Charge Point ID override")
 
     # RFID commands
-    rfid_p = subparsers.add_parser("rfid", aliases=["rfids"], help="Manage registered RFID badges (show, add, rename, delete)")
+    rfid_p = subparsers.add_parser("rfid", help="Manage registered RFID badges (list, add, rename, delete)")
     rfid_sub = rfid_p.add_subparsers(dest="rfid_action", help="RFID action")
 
-    # rfid show / list
-    rfid_show_p = rfid_sub.add_parser("show", aliases=["list"], help="Show/list registered RFID badges (default)")
-    rfid_show_p.add_argument("--json", action="store_true", help="Output raw JSON")
+    # rfid list
+    rfid_list_p = rfid_sub.add_parser("list", help="List registered RFID badges")
+    rfid_list_p.add_argument("--json", action="store_true", help="Output raw JSON")
 
     # rfid add <tag> <name>
     rfid_add_p = rfid_sub.add_parser("add", help="Register a new RFID badge")
@@ -996,33 +996,33 @@ def main() -> None:
     rfid_rename_p.add_argument("name", help="New display name")
 
     # rfid delete <id>
-    rfid_del_p = rfid_sub.add_parser("delete", aliases=["remove", "rm"], help="Delete an RFID badge")
+    rfid_del_p = rfid_sub.add_parser("delete", help="Delete an RFID badge")
     rfid_del_p.add_argument("id", type=int, help="RFID badge database ID to delete")
 
     # Pricing & Tariffs
-    pricing_p = subparsers.add_parser("pricing", aliases=["tariff", "tariffs"], help="Get active electricity tariffs and connector pricing")
+    pricing_p = subparsers.add_parser("pricing", help="Get active electricity tariffs and connector pricing")
     pricing_p.add_argument("--id", type=int, help="Charge Point ID override")
     pricing_p.add_argument("--connector", type=int, default=1, help="Connector number (default: 1)")
     pricing_p.add_argument("--json", action="store_true", help="Output raw JSON")
 
     # Invoices & Billing
-    inv_p = subparsers.add_parser("invoices", aliases=["billing"], help="Manage billing invoices and download PDFs")
+    inv_p = subparsers.add_parser("invoices", help="Manage billing invoices and download PDFs")
     inv_sub = inv_p.add_subparsers(dest="invoice_action", help="Invoice action")
 
-    inv_list_p = inv_sub.add_parser("list", aliases=["show"], help="List billing records and invoices (default)")
+    inv_list_p = inv_sub.add_parser("list", help="List billing records and invoices")
     inv_list_p.add_argument("--json", action="store_true", help="Output raw JSON")
 
     inv_down_p = inv_sub.add_parser("download", help="Download invoice PDF")
     inv_down_p.add_argument("id", help="Invoice ID")
-    inv_down_p.add_argument("--output", "-o", help="Target PDF file path (default: invoice_<id>.pdf)")
+    inv_down_p.add_argument("--output", help="Target PDF file path (default: invoice_<id>.pdf)")
 
     # Guest Invitations
-    guest_p = subparsers.add_parser("guests", aliases=["invitations", "guest-invitations"], help="List active guest invitations")
+    guest_p = subparsers.add_parser("guests", help="List active guest invitations")
     guest_p.add_argument("--id", type=int, help="Charge Point ID override")
     guest_p.add_argument("--json", action="store_true", help="Output raw JSON")
 
     # Notifications
-    notif_p = subparsers.add_parser("notifications", aliases=["notification-settings"], help="View notification and email report preferences")
+    notif_p = subparsers.add_parser("notifications", help="View notification and email report preferences")
     notif_p.add_argument("--json", action="store_true", help="Output raw JSON")
 
     # Reports
@@ -1068,7 +1068,7 @@ def main() -> None:
         if args.subcommand == "login":
             client.interactive_login(open_browser=not args.no_browser)
 
-        elif args.subcommand in ("account", "user", "info"):
+        elif args.subcommand == "account":
             user_info = client.get_user_info()
             if getattr(args, "json", False):
                 print(json.dumps(user_info, indent=2))
@@ -1130,9 +1130,9 @@ def main() -> None:
             res = client.rename_station(args.name, charge_point_id=args.id)
             print(json.dumps(res, indent=2))
 
-        elif args.subcommand in ("rfid", "rfids"):
-            action = getattr(args, "rfid_action", None) or "show"
-            if action in ("show", "list"):
+        elif args.subcommand == "rfid":
+            action = getattr(args, "rfid_action", None) or "list"
+            if action == "list":
                 rfids = client.list_rfids()
                 if getattr(args, "json", False):
                     print(json.dumps(rfids, indent=2))
@@ -1150,12 +1150,12 @@ def main() -> None:
                 res = client.update_rfid(rfid_id=args.id, rfid_name=args.name)
                 print(f"Renamed RFID badge ID {args.id} to '{args.name}':")
                 print(json.dumps(res, indent=2) if res else "Success.")
-            elif action in ("delete", "remove", "rm"):
+            elif action == "delete":
                 res = client.delete_rfid(rfid_id=args.id)
                 print(f"Deleted RFID badge ID {args.id}:")
                 print(json.dumps(res, indent=2) if res else "Success.")
 
-        elif args.subcommand in ("pricing", "tariff", "tariffs"):
+        elif args.subcommand == "pricing":
             pricing = client.get_pricing(charge_point_id=args.id, connector_number=args.connector)
             if getattr(args, "json", False):
                 print(json.dumps(pricing, indent=2))
@@ -1173,9 +1173,9 @@ def main() -> None:
                 if vat is not None:
                     print(f"VAT:           {vat}%")
 
-        elif args.subcommand in ("invoices", "billing"):
+        elif args.subcommand == "invoices":
             action = getattr(args, "invoice_action", None) or "list"
-            if action in ("list", "show"):
+            if action == "list":
                 invoices = client.list_invoices()
                 if getattr(args, "json", False):
                     print(json.dumps(invoices, indent=2))
@@ -1196,7 +1196,7 @@ def main() -> None:
                 client.download_invoice_pdf(args.id, out_path)
                 print(f"Downloaded invoice {args.id} to {out_path}")
 
-        elif args.subcommand in ("guests", "invitations", "guest-invitations"):
+        elif args.subcommand == "guests":
             invitations = client.get_guest_invitations(charge_point_id=args.id)
             if getattr(args, "json", False):
                 print(json.dumps(invitations, indent=2))
@@ -1210,7 +1210,7 @@ def main() -> None:
                     state = inv.get("status") or inv.get("state", "Active")
                     print(f"- Invitation ID {guest_id}: {recipient} ({role}) - {state}")
 
-        elif args.subcommand in ("notifications", "notification-settings"):
+        elif args.subcommand == "notifications":
             notif = client.get_notification_settings()
             if getattr(args, "json", False):
                 print(json.dumps(notif, indent=2))
