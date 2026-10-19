@@ -270,10 +270,14 @@ Alongside `neovac_client.py`, the repository provides a HACS-compatible Home Ass
     - `transaction_report`, `price_updated`, `settings_changed`, `error`
 - **Platforms**:
   - `sensor.py`: 20 sensors per station (Status, Connector Status, Charging Power, Max Power, Session Energy, Session Cost, Session Duration, Active Transaction ID, Active RFID Badge, Electricity Tariff, 30-Day Energy/Cost/Sessions, Last Session Energy/Cost/End, Monthly Analytics Energy, Registered RFID Badges, Latest Invoice, Guest Invitations).
+    - **Strict Session Separation (No Cross-Contamination/Fake Fallbacks)**:
+      - Active session sensors (`session_energy`, `session_cost`, `session_duration`, `active_rfid_badge`, `active_transaction_id`) strictly read ONLY from the current active session (`live_transaction`). They **never** fall back to or pull data from completed session reports (`last_session`), preventing current sessions from displaying past session energy, cost, duration, or RFID badges.
+      - Last session sensors (`last_session_energy`, `last_session_cost`, `last_session_duration`, `last_session_end`) strictly read ONLY from `_get_last_session(b.get("report", {}))`.
+    - `active_rfid_badge`: Strictly reads the active session's `rfidTag` from `live_transaction`. If no badge was used (e.g. app remote start / plug-and-charge) or if the backend returned the user/account ID, it displays `None`. Never displays the user ID as an RFID badge and never pulls an RFID badge from past sessions.
     - `electricity_tariff`: Uses `native_unit_of_measurement="CHF/kWh"` and `state_class=SensorStateClass.MEASUREMENT` with `device_class=None` to adhere strictly to Home Assistant core rules (HA forbids `SensorDeviceClass.MONETARY` with compound rate units like `CHF/kWh` and `measurement` state class).
-    - `session_duration`: Evaluates active session duration directly from `duration` if present (>0), or dynamically computes elapsed time from `startTime` (`now - startTime`, or `endTime - startTime` if finished) to accurately match the mobile app when the station reports 0 in `duration`. Exposes `start_time` and `end_time` in attributes.
-    - `session_cost`: Evaluates cost strictly from given `chargePriceInChf` / `totalPrice` in the active transaction or recent session report without dynamic tariff calculations. Exposes `price_per_kwh` in attributes.
-    - `session_energy`: Reads live `accumulatedEnergyKwH` or `chargeQuantityInkWh` from the active transaction, falling back to recent session report.
+    - `session_duration`: Evaluates active session duration directly from `duration` if present (>0), or from `startTime` (`now - startTime`, or `endTime - startTime` if finished) strictly within `live_transaction`.
+    - `session_cost`: Evaluates cost strictly from given `chargePriceInChf` / `totalPrice` in the active transaction without dynamic calculation or fallback to past reports.
+    - `session_energy`: Reads live `accumulatedEnergyKwH` or `chargeQuantityInkWh` strictly from `live_transaction`.
     - `report_30d_energy` / `report_30d_cost` / `report_30d_sessions`: Extracts session records from the API's `chargeReport` list (or raw list) and aggregates totals if top-level aggregate fields are omitted.
   - `binary_sensor.py`: 5 binary sensors (Online, Cable Plugged In, Charging, Problem, Maintenance Mode).
   - `switch.py`: 4 switches (Charging Start/Stop [hidden by default via entity_registry_visible_default=False to avoid dashboard clutter with buttons], Permanent Cable Lock, Night Charging Schedule, Plug & Charge).

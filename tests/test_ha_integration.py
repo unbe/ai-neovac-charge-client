@@ -1081,7 +1081,7 @@ class TestNeoVacIntegration(unittest.IsolatedAsyncioTestCase):
         }
         self.assertEqual(sensor._calculate_session_cost(coord, bundle_cost_zero), 0.0)
 
-        # 7. Fallback to last session report when live_transaction is empty
+        # 7. When live_transaction is empty, active session entities do not pull fake data from report
         bundle_from_report = {
             "live_transaction": {},
             "report": {
@@ -1096,9 +1096,9 @@ class TestNeoVacIntegration(unittest.IsolatedAsyncioTestCase):
             },
             "pricing": {},
         }
-        self.assertEqual(sensor._calculate_session_energy(coord, bundle_from_report), 4.53)
-        self.assertEqual(sensor._calculate_session_duration(coord, bundle_from_report), 28800.0)
-        self.assertEqual(sensor._calculate_session_cost(coord, bundle_from_report), 1.27)
+        self.assertEqual(sensor._calculate_session_energy(coord, bundle_from_report), 0.0)
+        self.assertEqual(sensor._calculate_session_duration(coord, bundle_from_report), 0.0)
+        self.assertEqual(sensor._calculate_session_cost(coord, bundle_from_report), 0.0)
 
         # 8. Test 30-day report aggregation with chargeReport list (real API format)
         bundle_charge_report = {
@@ -1185,6 +1185,91 @@ class TestNeoVacIntegration(unittest.IsolatedAsyncioTestCase):
                 self.assertIn("/mobile/api/charge-point/101/pricing-details", calls)
         finally:
             await runner.cleanup()
+
+
+    def test_rfid_badge_filtering_never_shows_user_id(self) -> None:
+        """Verify that user account IDs never show in RFID badge fields and real API data is shown."""
+        from custom_components.neovac_mycharge import sensor
+        from unittest.mock import MagicMock
+
+        rfids = [
+            {"id": 1, "userId": "NUM_USER_99", "rfidTag": "04AABBCCDD", "rfidName": "Primary Card"},
+            {"id": 2, "userId": "NUM_USER_99", "rfidTag": "04CCDDEEFF", "rfidName": "Backup Card"},
+        ]
+
+        # Account ID / User ID must NEVER be accepted as RFID badge
+        self.assertIsNone(sensor._resolve_rfid_display("TEST_USER_ACC", rfids, user_id="TEST_USER_ACC"))
+        self.assertIsNone(sensor._resolve_rfid_display(None, rfids))
+        self.assertIsNone(sensor._resolve_rfid_display("", rfids))
+
+        # Registered badges are resolved with their name
+        self.assertEqual(
+            sensor._resolve_rfid_display("04AABBCCDD", rfids, user_id="TEST_USER_ACC"),
+            "Primary Card (04AABBCCDD)",
+        )
+        self.assertEqual(
+            sensor._resolve_rfid_display("04CCDDEEFF", rfids, user_id="TEST_USER_ACC"),
+            "Backup Card (04CCDDEEFF)",
+        )
+        # Unregistered RFID badge returns what API returned
+        self.assertEqual(
+            sensor._resolve_rfid_display("11223344", rfids, user_id="TEST_USER_ACC"),
+            "11223344",
+        )
+
+        coord = MagicMock()
+        coord.data = {
+            "account_id": "TEST_USER_ACC",
+            "rfids": rfids,
+        }
+
+        # Active session started via app (no RFID badge used)
+        bundle_app_session = {
+            "info": {"status": "Charging"},
+            "live_transaction": {
+                "transactionId": 12345,
+                "currentPowerKw": 11.0,
+                "accumulatedEnergyKwH": 3.5,
+                "accountId": "TEST_USER_ACC",
+                "rfidTag": None,
+            },
+            "report": {
+                "chargeReport": [
+                    {
+                        "chargeProcessEndTime": "2026-10-18T10:00:00Z",
+                        "rfidTag": "04AABBCCDD",
+                        "chargeQuantityInkWh": 15.0,
+                    }
+                ]
+            },
+        }
+
+        # Active RFID badge must be None (do NOT pull from past session!)
+        active_rfid_desc = next(d for d in sensor.SENSOR_DESCRIPTIONS if d.key == "active_rfid_badge")
+        self.assertIsNone(active_rfid_desc.value_fn(coord, bundle_app_session))
+
+        # Check session_energy attr_fn
+        session_energy_desc = next(d for d in sensor.SENSOR_DESCRIPTIONS if d.key == "session_energy")
+        attrs = session_energy_desc.attr_fn(coord, bundle_app_session) if session_energy_desc.attr_fn else {}
+        self.assertIsNone(attrs.get("rfid_tag"))
+
+        # Last session where no badge was used (API returned user ID in rfidTag)
+        bundle_last_app = {
+            "live_transaction": {},
+            "report": {
+                "chargeReport": [
+                    {
+                        "chargeProcessEndTime": "2026-10-19T12:00:00Z",
+                        "rfidTag": "TEST_USER_ACC",
+                        "userId": "TEST_USER_ACC",
+                        "chargeQuantityInkWh": 10.0,
+                    }
+                ]
+            },
+        }
+        last_energy_desc = next(d for d in sensor.SENSOR_DESCRIPTIONS if d.key == "last_session_energy")
+        last_attrs = last_energy_desc.attr_fn(coord, bundle_last_app) if last_energy_desc.attr_fn else {}
+        self.assertIsNone(last_attrs.get("rfid_tag"))
 
 
 if __name__ == "__main__":

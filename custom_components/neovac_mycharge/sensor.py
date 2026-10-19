@@ -121,7 +121,7 @@ def _get_last_session(report: dict[str, Any]) -> dict[str, Any]:
 def _calculate_session_energy(
     coord: NeoVacDataUpdateCoordinator, b: dict[str, Any]
 ) -> float:
-    """Extracts active session accumulated energy in kWh, falling back to recent session report."""
+    """Extracts active session accumulated energy in kWh directly from live transaction."""
     live_tx = b.get("live_transaction", {})
     raw_val = _get_ci(
         live_tx,
@@ -131,22 +131,9 @@ def _calculate_session_energy(
     )
     if raw_val is not None:
         try:
-            val = float(raw_val)
-            if val > 0:
-                return round(val, 3)
+            return round(float(raw_val), 3)
         except (ValueError, TypeError) as err:
             _LOGGER.warning("Failed to parse session energy '%s': %s", raw_val, err)
-
-    # Fallback to last session in report if available
-    last_session = _get_last_session(b.get("report", {}))
-    last_qty = _get_ci(last_session, "chargeQuantityInkWh", "accumulatedEnergyKwH")
-    if last_qty is not None:
-        try:
-            val = float(last_qty)
-            if val > 0:
-                return round(val, 3)
-        except (ValueError, TypeError):
-            pass
 
     return 0.0
 
@@ -154,7 +141,7 @@ def _calculate_session_energy(
 def _calculate_session_duration(
     coord: NeoVacDataUpdateCoordinator, b: dict[str, Any]
 ) -> float:
-    """Calculates active session duration in seconds from duration field, startTime, or last session report."""
+    """Calculates active session duration in seconds strictly from live transaction."""
     live_tx = b.get("live_transaction", {})
 
     raw_dur = _get_ci(live_tx, "duration", "totalDuration", "sessionDuration")
@@ -199,25 +186,13 @@ def _calculate_session_duration(
                 diff = (now - start_dt).total_seconds()
                 return max(0.0, float(round(diff)))
 
-    # Fallback to last session in report
-    last_session = _get_last_session(b.get("report", {}))
-    last_dur = _get_ci(
-        last_session,
-        "chargeProcessDurationInSeconds",
-        "duration",
-        "durationInSeconds",
-    )
-    parsed_last = _parse_duration_seconds(last_dur)
-    if parsed_last is not None and parsed_last > 0:
-        return parsed_last
-
     return parsed_dur if parsed_dur is not None else 0.0
 
 
 def _calculate_session_cost(
     coord: NeoVacDataUpdateCoordinator, b: dict[str, Any]
 ) -> float:
-    """Returns session cost in CHF strictly from given price fields without dynamic calculation."""
+    """Returns active session cost in CHF strictly from live transaction without dynamic calculation."""
     live_tx = b.get("live_transaction", {})
 
     raw_cost = _get_ci(live_tx, "chargePriceInChf", "totalPrice", "costChf")
@@ -228,23 +203,6 @@ def _calculate_session_cost(
                 return round(val, 2)
         except (ValueError, TypeError):
             _LOGGER.warning("Failed to parse chargePriceInChf '%s' as float", raw_cost)
-
-    # Fallback: check last session in report
-    last_session = _get_last_session(b.get("report", {}))
-    last_cost = _get_ci(last_session, "chargePriceInChf", "totalPrice")
-    if last_cost is not None:
-        try:
-            val = float(last_cost)
-            if val > 0:
-                return round(val, 2)
-        except (ValueError, TypeError):
-            pass
-
-    if raw_cost is not None:
-        try:
-            return float(raw_cost)
-        except (ValueError, TypeError):
-            pass
 
     return 0.0
 
@@ -316,18 +274,25 @@ def _calculate_report_30d_cost(
 
 
 def _resolve_rfid_display(
-    tag: str | None, rfids: list[dict[str, Any]]
+    tag: str | None,
+    rfids: list[dict[str, Any]],
+    user_id: str | None = None,
 ) -> str | None:
-    """Maps a raw RFID hex tag to 'Name (TAG)' if registered."""
+    """Maps a raw RFID hex tag to 'Name (TAG)' if registered. Returns None if no badge or if tag is user ID."""
     if not tag:
         return None
-    clean = tag.strip().upper()
+    clean = str(tag).strip()
+    if not clean:
+        return None
+    # Do not show user ID in RFID badge field
+    if user_id and clean.upper() == str(user_id).strip().upper():
+        return None
     for r in rfids:
-        r_tag = str(_get_ci(r, "rfidTag", default="")).strip().upper()
-        if r_tag == clean:
+        r_tag = str(_get_ci(r, "rfidTag", default="")).strip()
+        if r_tag.upper() == clean.upper():
             name = _get_ci(r, "rfidName", default="")
-            return f"{name} ({clean})" if name else clean
-    return clean
+            return f"{name} ({clean.upper()})" if name else clean.upper()
+    return clean.upper()
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -419,7 +384,16 @@ SENSOR_DESCRIPTIONS: tuple[NeoVacSensorEntityDescription, ...] = (
             "transaction_id": _get_ci(
                 b.get("live_transaction", {}), "transactionId"
             ),
-            "rfid_tag": _get_ci(b.get("live_transaction", {}), "rfidTag"),
+            "rfid_tag": (
+                None
+                if str(_get_ci(b.get("live_transaction", {}), "rfidTag", default="")).strip().upper()
+                in (
+                    str(coord.data.get("account_id", "")).strip().upper() if coord.data else "",
+                    str(_get_ci(b.get("live_transaction", {}), "accountId", default="")).strip().upper(),
+                    "",
+                )
+                else _get_ci(b.get("live_transaction", {}), "rfidTag")
+            ),
         },
     ),
     NeoVacSensorEntityDescription(
@@ -483,9 +457,12 @@ SENSOR_DESCRIPTIONS: tuple[NeoVacSensorEntityDescription, ...] = (
         name="Active RFID Badge",
         icon="mdi:card-account-details-outline",
         value_fn=lambda coord, b: _resolve_rfid_display(
-            _get_ci(b.get("live_transaction", {}), "rfidTag")
-            or _get_ci(_get_last_session(b.get("report", {})), "rfidTag"),
+            _get_ci(b.get("live_transaction", {}), "rfidTag"),
             coord.data.get("rfids", []) if coord.data else [],
+            user_id=(
+                _get_ci(b.get("live_transaction", {}), "accountId")
+                or (coord.data.get("account_id") if coord.data else None)
+            ),
         ),
     ),
     NeoVacSensorEntityDescription(
@@ -584,7 +561,16 @@ SENSOR_DESCRIPTIONS: tuple[NeoVacSensorEntityDescription, ...] = (
             "cost_chf": _get_ci(
                 _get_last_session(b.get("report", {})), "chargePriceInChf"
             ),
-            "rfid_tag": _get_ci(_get_last_session(b.get("report", {})), "rfidTag"),
+            "rfid_tag": (
+                None
+                if str(_get_ci(_get_last_session(b.get("report", {})), "rfidTag", default="")).strip().upper()
+                in (
+                    str(coord.data.get("account_id", "")).strip().upper() if coord.data else "",
+                    str(_get_ci(_get_last_session(b.get("report", {})), "userId", default="")).strip().upper(),
+                    "",
+                )
+                else _get_ci(_get_last_session(b.get("report", {})), "rfidTag")
+            ),
             "user_name": _get_ci(_get_last_session(b.get("report", {})), "userName"),
         },
     ),
