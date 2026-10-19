@@ -1100,6 +1100,32 @@ class TestNeoVacIntegration(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(sensor._calculate_session_duration(coord, bundle_from_report), 28800.0)
         self.assertEqual(sensor._calculate_session_cost(coord, bundle_from_report), 1.27)
 
+        # 8. Test 30-day report aggregation with chargeReport list (real API format)
+        bundle_charge_report = {
+            "live_transaction": {},
+            "report": {
+                "chargeReport": [
+                    {
+                        "chargeQuantityInkWh": 10.0,
+                        "chargePriceInChf": 3.0,
+                        "chargeProcessEndTime": "2026-10-18T10:00:00Z",
+                    },
+                    {
+                        "chargeQuantityInkWh": 15.5,
+                        "chargePriceInChf": 4.5,
+                        "chargeProcessEndTime": "2026-10-19T10:00:00Z",
+                    },
+                ]
+            },
+            "pricing": {},
+        }
+        self.assertEqual(len(sensor._get_report_sessions(bundle_charge_report["report"])), 2)
+        self.assertEqual(sensor._calculate_report_30d_energy(coord, bundle_charge_report), 25.5)
+        self.assertEqual(sensor._calculate_report_30d_cost(coord, bundle_charge_report), 7.5)
+        last_s = sensor._get_last_session(bundle_charge_report["report"])
+        self.assertEqual(last_s["chargeQuantityInkWh"], 15.5)
+        self.assertEqual(last_s["chargePriceInChf"], 4.5)
+
     def test_error_handling_not_swallowed(self) -> None:
         """Verify that parsing errors, disconnects, and API failures are logged rather than swallowed."""
         _install_ha_stubs()

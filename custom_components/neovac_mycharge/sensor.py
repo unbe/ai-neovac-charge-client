@@ -83,9 +83,14 @@ def _parse_duration_seconds(raw_val: Any) -> float | None:
     return None
 
 
-def _get_report_sessions(report: dict[str, Any]) -> list[dict[str, Any]]:
+def _get_report_sessions(report: Any) -> list[dict[str, Any]]:
     """Extracts the list of individual charging session records from a report payload."""
+    if isinstance(report, list):
+        return report
+    if not isinstance(report, dict):
+        return []
     for key in (
+        "chargeReport",
         "chargePointChargeReports",
         "chargeProcesses",
         "processes",
@@ -240,6 +245,72 @@ def _calculate_session_cost(
             return float(raw_cost)
         except (ValueError, TypeError):
             pass
+
+    return 0.0
+
+
+def _calculate_report_30d_energy(
+    coord: NeoVacDataUpdateCoordinator, b: dict[str, Any]
+) -> float:
+    """Calculates 30-day energy from aggregate report field or sums session quantities."""
+    rep = b.get("report", {})
+    total = _get_ci(
+        rep,
+        "totalChargingQuantityInkWh",
+        "chargeQuantityInkWh",
+        "totalEnergyKwh",
+    )
+    if total is not None:
+        try:
+            val = float(total)
+            if val > 0:
+                return round(val, 2)
+        except (ValueError, TypeError):
+            pass
+
+    sessions = _get_report_sessions(rep)
+    if sessions:
+        total_kwh = sum(
+            float(
+                _get_ci(s, "chargeQuantityInkWh", "accumulatedEnergyKwH", default=0.0)
+                or 0.0
+            )
+            for s in sessions
+        )
+        return round(total_kwh, 2)
+
+    return 0.0
+
+
+def _calculate_report_30d_cost(
+    coord: NeoVacDataUpdateCoordinator, b: dict[str, Any]
+) -> float:
+    """Calculates 30-day cost from aggregate report field or sums session costs."""
+    rep = b.get("report", {})
+    total = _get_ci(
+        rep,
+        "totalPrice",
+        "chargePriceInChf",
+        "totalCostChf",
+    )
+    if total is not None:
+        try:
+            val = float(total)
+            if val > 0:
+                return round(val, 2)
+        except (ValueError, TypeError):
+            pass
+
+    sessions = _get_report_sessions(rep)
+    if sessions:
+        total_chf = sum(
+            float(
+                _get_ci(s, "chargePriceInChf", "totalPrice", default=0.0)
+                or 0.0
+            )
+            for s in sessions
+        )
+        return round(total_chf, 2)
 
     return 0.0
 
@@ -460,17 +531,7 @@ SENSOR_DESCRIPTIONS: tuple[NeoVacSensorEntityDescription, ...] = (
         state_class=SensorStateClass.TOTAL,
         suggested_display_precision=2,
         icon="mdi:lightning-bolt-circle",
-        value_fn=lambda coord, b: (
-            float(
-                _get_ci(
-                    b.get("report", {}),
-                    "totalChargingQuantityInkWh",
-                    "chargeQuantityInkWh",
-                    "totalEnergyKwh",
-                    default=0.0,
-                )
-            )
-        ),
+        value_fn=_calculate_report_30d_energy,
         attr_fn=lambda coord, b: {
             "sessions_count": len(_get_report_sessions(b.get("report", {}))),
         },
@@ -484,17 +545,7 @@ SENSOR_DESCRIPTIONS: tuple[NeoVacSensorEntityDescription, ...] = (
         state_class=SensorStateClass.TOTAL,
         suggested_display_precision=2,
         icon="mdi:cash-check",
-        value_fn=lambda coord, b: (
-            float(
-                _get_ci(
-                    b.get("report", {}),
-                    "totalPrice",
-                    "chargePriceInChf",
-                    "totalCostChf",
-                    default=0.0,
-                )
-            )
-        ),
+        value_fn=_calculate_report_30d_cost,
     ),
     NeoVacSensorEntityDescription(
         key="report_30d_sessions",
