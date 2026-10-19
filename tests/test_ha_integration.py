@@ -1126,6 +1126,27 @@ class TestNeoVacIntegration(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(last_s["chargeQuantityInkWh"], 15.5)
         self.assertEqual(last_s["chargePriceInChf"], 4.5)
 
+        # 9. Test charging_power returns real API power even if station status is not "Charging"
+        power_desc = next(d for d in sensor.SENSOR_DESCRIPTIONS if d.key == "charging_power")
+        bundle_suspended = {
+            "info": {"status": "SuspendedEV"},
+            "live_transaction": {"currentPowerKw": 7.4},
+        }
+        self.assertEqual(power_desc.value_fn(coord, bundle_suspended), 7.4)
+
+        # 10. Test last session and analytics return None when data is missing, not faked 0.0
+        bundle_empty_last = {
+            "live_transaction": {},
+            "report": {"chargeReport": [{"chargeProcessEndTime": "2026-10-18T10:00:00Z"}]},
+            "analytics": {},
+        }
+        last_e_desc = next(d for d in sensor.SENSOR_DESCRIPTIONS if d.key == "last_session_energy")
+        last_c_desc = next(d for d in sensor.SENSOR_DESCRIPTIONS if d.key == "last_session_cost")
+        monthly_desc = next(d for d in sensor.SENSOR_DESCRIPTIONS if d.key == "monthly_analytics_energy")
+        self.assertIsNone(last_e_desc.value_fn(coord, bundle_empty_last))
+        self.assertIsNone(last_c_desc.value_fn(coord, bundle_empty_last))
+        self.assertIsNone(monthly_desc.value_fn(coord, bundle_empty_last))
+
     def test_error_handling_not_swallowed(self) -> None:
         """Verify that parsing errors, disconnects, and API failures are logged rather than swallowed."""
         _install_ha_stubs()

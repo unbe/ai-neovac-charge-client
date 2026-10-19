@@ -448,7 +448,6 @@ class NeoVacDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 tx_status = _get_ci(first_arg, "status", "ocppStatus")
 
                 if has_end:
-                    live_tx["currentPowerKw"] = 0.0
                     self._live_transactions[cp_id] = live_tx
                     cp_bundle["live_transaction"] = live_tx
                     self._check_and_emit_status_transitions(
@@ -465,8 +464,6 @@ class NeoVacDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 if tx_status:
                     cp_info["status"] = tx_status
                     cp_info["connectorZeroStatus"] = tx_status
-                elif _get_ci(first_arg, "currentPowerKw", default=0) > 0:
-                    cp_info["status"] = STATUS_CHARGING
 
                 self._live_transactions[cp_id] = live_tx
                 cp_bundle["live_transaction"] = live_tx
@@ -482,15 +479,20 @@ class NeoVacDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 self.async_set_updated_data(self.data)
 
             elif target == "StartTransactionNotification":
-                cp_info["status"] = STATUS_CHARGING
-                self._check_and_emit_status_transitions(cp_id, STATUS_CHARGING, extra=first_arg)
+                st = _get_ci(first_arg, "status", "ocppStatus")
+                if st:
+                    cp_info["status"] = st
+                    cp_info["connectorZeroStatus"] = st
+                self._check_and_emit_status_transitions(cp_id, st or STATUS_CHARGING, extra=first_arg)
                 self._emit_event(cp_id, EVENT_CHARGING_STARTED, first_arg)
                 self.async_set_updated_data(self.data)
 
             elif target == "StopTransactionNotification":
-                if cp_id in self._live_transactions:
-                    self._live_transactions[cp_id]["currentPowerKw"] = 0.0
-                self._check_and_emit_status_transitions(cp_id, STATUS_FINISHING, extra=first_arg)
+                st = _get_ci(first_arg, "status", "ocppStatus")
+                if st:
+                    cp_info["status"] = st
+                    cp_info["connectorZeroStatus"] = st
+                self._check_and_emit_status_transitions(cp_id, st or STATUS_FINISHING, extra=first_arg)
                 self._emit_event(cp_id, EVENT_CHARGING_STOPPED, first_arg)
                 self.async_set_updated_data(self.data)
                 self.hass.async_create_task(self.async_request_refresh())
@@ -509,8 +511,6 @@ class NeoVacDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 if new_status:
                     cp_info["status"] = new_status
                     cp_info["connectorZeroStatus"] = new_status
-                    if new_status != STATUS_CHARGING and cp_id in self._live_transactions:
-                        self._live_transactions[cp_id]["currentPowerKw"] = 0.0
                 is_online = _get_ci(first_arg, "isOnline")
                 if is_online is not None:
                     cp_info["isOnline"] = bool(is_online)

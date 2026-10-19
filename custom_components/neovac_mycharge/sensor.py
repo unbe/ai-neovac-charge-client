@@ -199,7 +199,7 @@ def _calculate_session_cost(
     if raw_cost is not None:
         try:
             val = float(raw_cost)
-            if val > 0:
+            if val >= 0:
                 return round(val, 2)
         except (ValueError, TypeError):
             _LOGGER.warning("Failed to parse chargePriceInChf '%s' as float", raw_cost)
@@ -221,7 +221,7 @@ def _calculate_report_30d_energy(
     if total is not None:
         try:
             val = float(total)
-            if val > 0:
+            if val >= 0:
                 return round(val, 2)
         except (ValueError, TypeError):
             pass
@@ -254,7 +254,7 @@ def _calculate_report_30d_cost(
     if total is not None:
         try:
             val = float(total)
-            if val > 0:
+            if val >= 0:
                 return round(val, 2)
         except (ValueError, TypeError):
             pass
@@ -354,8 +354,8 @@ SENSOR_DESCRIPTIONS: tuple[NeoVacSensorEntityDescription, ...] = (
         suggested_display_precision=2,
         icon="mdi:flash",
         value_fn=lambda coord, b: (
-            float(_get_ci(b.get("live_transaction", {}), "currentPowerKw", default=0.0))
-            if _get_ci(b.get("info", {}), "status") == STATUS_CHARGING
+            float(_get_ci(b.get("live_transaction", {}), "currentPowerKw"))
+            if _get_ci(b.get("live_transaction", {}), "currentPowerKw") is not None
             else 0.0
         ),
     ),
@@ -402,12 +402,7 @@ SENSOR_DESCRIPTIONS: tuple[NeoVacSensorEntityDescription, ...] = (
         icon="mdi:cash-multiple",
         value_fn=_calculate_session_cost,
         attr_fn=lambda coord, b: {
-            "price_per_kwh": (
-                _get_ci(b.get("live_transaction", {}), "pricePerkWh")
-                or _get_ci(
-                    b.get("pricing", {}), "defaultTariffPrice", "pricePerkWh"
-                )
-            ),
+            "price_per_kwh": _get_ci(b.get("live_transaction", {}), "pricePerkWh"),
         },
     ),
     NeoVacSensorEntityDescription(
@@ -540,10 +535,15 @@ SENSOR_DESCRIPTIONS: tuple[NeoVacSensorEntityDescription, ...] = (
                 _get_ci(
                     _get_last_session(b.get("report", {})),
                     "chargeQuantityInkWh",
-                    default=0.0,
                 )
             )
-            if _get_last_session(b.get("report", {}))
+            if (
+                _get_last_session(b.get("report", {}))
+                and _get_ci(
+                    _get_last_session(b.get("report", {})),
+                    "chargeQuantityInkWh",
+                ) is not None
+            )
             else None
         ),
         attr_fn=lambda coord, b: {
@@ -572,10 +572,17 @@ SENSOR_DESCRIPTIONS: tuple[NeoVacSensorEntityDescription, ...] = (
                 _get_ci(
                     _get_last_session(b.get("report", {})),
                     "chargePriceInChf",
-                    default=0.0,
+                    "totalPrice",
                 )
             )
-            if _get_last_session(b.get("report", {}))
+            if (
+                _get_last_session(b.get("report", {}))
+                and _get_ci(
+                    _get_last_session(b.get("report", {})),
+                    "chargePriceInChf",
+                    "totalPrice",
+                ) is not None
+            )
             else None
         ),
     ),
@@ -615,11 +622,17 @@ SENSOR_DESCRIPTIONS: tuple[NeoVacSensorEntityDescription, ...] = (
                     b.get("analytics", {}),
                     "totalChargingQuantityInkWh",
                     "chargeQuantityInkWh",
-                    default=0.0,
                 )
             )
-            if b.get("analytics")
-            else 0.0
+            if (
+                b.get("analytics")
+                and _get_ci(
+                    b.get("analytics", {}),
+                    "totalChargingQuantityInkWh",
+                    "chargeQuantityInkWh",
+                ) is not None
+            )
+            else None
         ),
         attr_fn=lambda coord, b: {
             "analytics_data": b.get("analytics", {}),
@@ -661,10 +674,18 @@ SENSOR_DESCRIPTIONS: tuple[NeoVacSensorEntityDescription, ...] = (
                     "totalAmount",
                     "amount",
                     "totalPrice",
-                    default=0.0,
                 )
             )
-            if coord.data and coord.data.get("invoices")
+            if (
+                coord.data
+                and coord.data.get("invoices")
+                and _get_ci(
+                    coord.data["invoices"][0],
+                    "totalAmount",
+                    "amount",
+                    "totalPrice",
+                ) is not None
+            )
             else None
         ),
         attr_fn=lambda coord, b: (
