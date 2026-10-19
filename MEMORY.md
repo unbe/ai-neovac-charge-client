@@ -270,7 +270,7 @@ Alongside `neovac_client.py`, the repository provides a HACS-compatible Home Ass
 - **Platforms**:
   - `sensor.py`: 20 sensors per station (Status, Connector Status, Charging Power, Max Power, Session Energy, Session Cost, Session Duration, Active Transaction ID, Active RFID Badge, Electricity Tariff, 30-Day Energy/Cost/Sessions, Last Session Energy/Cost/End, Monthly Analytics Energy, Registered RFID Badges, Latest Invoice, Guest Invitations).
   - `binary_sensor.py`: 5 binary sensors (Online, Cable Plugged In, Charging, Problem, Maintenance Mode).
-  - `switch.py`: 4 switches (Charging Start/Stop, Permanent Cable Lock, Night Charging Schedule, Plug & Charge).
+  - `switch.py`: 4 switches (Charging Start/Stop [hidden by default via entity_registry_visible_default=False to avoid dashboard clutter with buttons], Permanent Cable Lock, Night Charging Schedule, Plug & Charge).
   - `select.py`: Dynamic RFID badge selector used when remote-starting a charge.
   - `button.py`: Start Charging, Stop Charging, Send Email Report, Refresh Station Data.
   - `text.py`: Station custom display name (`rename_station`).

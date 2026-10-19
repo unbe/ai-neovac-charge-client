@@ -222,6 +222,7 @@ def _install_ha_stubs() -> None:
         icon: str | None = None
         device_class: str | None = None
         entity_category: str | None = None
+        entity_registry_visible_default: bool = True
 
     @dataclass(frozen=True, kw_only=True)
     class SensorEntityDescription(_BaseDesc):
@@ -749,6 +750,7 @@ class TestNeoVacIntegration(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(coord.selected_rfid_tags[1001], "04AABBCCDD")
 
                 sw_by_key = {s.entity_description.key: s for s in switches}
+                self.assertFalse(sw_by_key["charging_control"]._attr_entity_registry_visible_default)
                 await sw_by_key["charging_control"].async_turn_on()
                 self.assertEqual(state["started_with_rfid"], "04AABBCCDD")
 

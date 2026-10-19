@@ -68,7 +68,7 @@ During setup, you can choose between:
 - **Maintenance Mode** (`diagnostic`): `on` if station is in maintenance mode.
 
 ### Controls (`switch`, `select`, `button`, `text`)
-- **Charging** (`switch`): Start or stop charging (uses the badge selected in **Remote Start RFID Badge**).
+- **Charging** (`switch`, hidden by default): Start or stop charging (hidden on default dashboard to favor discrete Start/Stop buttons; active for automations or can be unhidden in entity settings).
 - **Permanent Cable Lock** (`switch`): Lock the charging cable permanently to the station.
 - **Night Charging Schedule** (`switch`): Restrict charging to the 22:00–06:00 tariff window.
 - **Plug & Charge** (`switch`): Automatically start charging as soon as a cable is plugged in.

@@ -45,6 +45,7 @@ SWITCH_DESCRIPTIONS: tuple[NeoVacSwitchEntityDescription, ...] = (
         name="Charging",
         device_class=SwitchDeviceClass.SWITCH,
         icon="mdi:ev-station",
+        entity_registry_visible_default=False,
         is_on_fn=lambda b: (
             _get_ci(b.get("info", {}), "status", "connectorZeroStatus")
             == STATUS_CHARGING
@@ -139,6 +140,10 @@ class NeoVacSwitchEntity(NeoVacEntity, SwitchEntity):
         super().__init__(coordinator, charge_point_id)
         self.entity_description = description
         self._attr_unique_id = f"{self.charge_point_id}_{description.key}"
+        if hasattr(description, "entity_registry_visible_default"):
+            self._attr_entity_registry_visible_default = (
+                description.entity_registry_visible_default
+            )
 
     @property
     def is_on(self) -> bool:
