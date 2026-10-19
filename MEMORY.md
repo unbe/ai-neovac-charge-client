@@ -10,7 +10,7 @@
 - **Privacy & Security**: **Never commit any identifiers (tokens, station IDs, serial numbers, account names/IDs, RFID badges, private configurations) to Git.** Always use generic dummy placeholders in tracked files and documentation. Keep credentials in untracked files (`neovac_auth.json`).
 - **Safety Policy**: **Never execute authenticated external requests using the user's credentials without explicit user confirmation.** Generic external requests are permitted, but anything sending authentication headers or accessing station hardware requires confirmation.
 - **Git Commit Convention**: After each task, create a git commit with author set to `<model-name> <antigravity@local>` (e.g. `Gemini 3.8 Flash <antigravity@local>`).
-- **CLI & Library Parity**: Whenever adding functionality to the client library (`neovac_client.py`), always expand the CLI parser and subcommands to expose that functionality as well. Use just a single canonical name for each command and option (do not implement aliases).
+- **CLI & Library Parity**: Whenever adding functionality to the client library (`neovac_client.py`), always expand the CLI parser and subcommands to expose that functionality as well. Use a single canonical name for each command (no command aliases); short option aliases for long flags (e.g. -o, -d, -s, -r) are allowed.
 
 ---
 

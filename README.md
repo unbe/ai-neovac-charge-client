@@ -157,19 +157,19 @@ python3 neovac_client.py rfid add 01020304050607 "Primary Badge"
 python3 neovac_client.py telemetry --hub connector --transport auto --duration 60
 
 # Electricity tariffs & pricing
-python3 neovac_client.py pricing
+python3 neovac_client.py tariff
 
 # Invoices & billing PDF download
 python3 neovac_client.py invoices list
-python3 neovac_client.py invoices download <invoice_id> --output invoice.pdf
+python3 neovac_client.py invoices download <invoice_id> -o invoice.pdf
 
-# View account profile, guest invitations, and notifications
-python3 neovac_client.py account
+# View user profile, guest invitations, and notifications
+python3 neovac_client.py user
 python3 neovac_client.py guests
 python3 neovac_client.py notifications
 
 # Charging reports and energy analytics
-python3 neovac_client.py report --days 30
-python3 neovac_client.py report --site <site_id> --days 30
-python3 neovac_client.py analytics --resolution Day --days 7
+python3 neovac_client.py report -d 30
+python3 neovac_client.py report -s <site_id> -d 30
+python3 neovac_client.py analytics -r Day -d 7
 ```

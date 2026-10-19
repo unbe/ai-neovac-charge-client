@@ -863,16 +863,17 @@ class TestNeoVacIntegration(unittest.IsolatedAsyncioTestCase):
 
         cli_calls = [
             (["neovac_client.py", "status"], "Garage"),
-            (["neovac_client.py", "account"], "John Doe"),
-            (["neovac_client.py", "pricing"], "Standard Night"),
+            (["neovac_client.py", "user"], "John Doe"),
+            (["neovac_client.py", "tariff"], "Standard Night"),
+            (["neovac_client.py", "tariff", "-c", "2"], "Standard Night"),
             (["neovac_client.py", "invoices", "list"], "INV-2026-001"),
-            (["neovac_client.py", "invoices", "download", "999", "--output", "/tmp/test.pdf"], "Downloaded invoice 999"),
+            (["neovac_client.py", "invoices", "download", "999", "-o", "/tmp/test.pdf"], "Downloaded invoice 999"),
             (["neovac_client.py", "guests"], "guest@example.com"),
             (["neovac_client.py", "notifications"], "emailMonthlyReport"),
-            (["neovac_client.py", "report", "--days", "7"], "report"),
-            (["neovac_client.py", "report", "--site", "site-1"], "report_site"),
-            (["neovac_client.py", "analytics", "--resolution", "Day"], "analytics"),
-            (["neovac_client.py", "analytics", "--site", "site-1"], "analytics_site"),
+            (["neovac_client.py", "report", "-d", "7"], "report"),
+            (["neovac_client.py", "report", "-s", "site-1"], "report_site"),
+            (["neovac_client.py", "analytics", "-r", "Day"], "analytics"),
+            (["neovac_client.py", "analytics", "-s", "site-1"], "analytics_site"),
         ]
 
         with patch("neovac_client.NeoVacClient", return_value=mock_client):

@@ -948,9 +948,9 @@ def main() -> None:
     status_p.add_argument("--id", type=int, help="Charge Point ID override")
     status_p.add_argument("--json", action="store_true", help="Output raw JSON")
 
-    # Account / User
-    account_p = subparsers.add_parser("account", help="Get user account and site overview")
-    account_p.add_argument("--json", action="store_true", help="Output raw JSON")
+    # User Profile
+    user_p = subparsers.add_parser("user", help="Get user account and site overview")
+    user_p.add_argument("--json", action="store_true", help="Output raw JSON")
 
     # Start / Stop
     start_p = subparsers.add_parser("start", help="Start charging session")
@@ -999,11 +999,11 @@ def main() -> None:
     rfid_del_p = rfid_sub.add_parser("delete", help="Delete an RFID badge")
     rfid_del_p.add_argument("id", type=int, help="RFID badge database ID to delete")
 
-    # Pricing & Tariffs
-    pricing_p = subparsers.add_parser("pricing", help="Get active electricity tariffs and connector pricing")
-    pricing_p.add_argument("--id", type=int, help="Charge Point ID override")
-    pricing_p.add_argument("--connector", type=int, default=1, help="Connector number (default: 1)")
-    pricing_p.add_argument("--json", action="store_true", help="Output raw JSON")
+    # Tariffs & Pricing
+    tariff_p = subparsers.add_parser("tariff", help="Get active electricity tariffs and connector pricing")
+    tariff_p.add_argument("--id", type=int, help="Charge Point ID override")
+    tariff_p.add_argument("--connector", "-c", type=int, default=1, help="Connector number (default: 1)")
+    tariff_p.add_argument("--json", action="store_true", help="Output raw JSON")
 
     # Invoices & Billing
     inv_p = subparsers.add_parser("invoices", help="Manage billing invoices and download PDFs")
@@ -1014,7 +1014,7 @@ def main() -> None:
 
     inv_down_p = inv_sub.add_parser("download", help="Download invoice PDF")
     inv_down_p.add_argument("id", help="Invoice ID")
-    inv_down_p.add_argument("--output", help="Target PDF file path (default: invoice_<id>.pdf)")
+    inv_down_p.add_argument("--output", "-o", help="Target PDF file path (default: invoice_<id>.pdf)")
 
     # Guest Invitations
     guest_p = subparsers.add_parser("guests", help="List active guest invitations")
@@ -1027,27 +1027,27 @@ def main() -> None:
 
     # Reports
     report_p = subparsers.add_parser("report", help="View charging history report")
-    report_p.add_argument("--days", type=int, default=30, help="Days to look back (default: 30)")
+    report_p.add_argument("--days", "-d", type=int, default=30, help="Days to look back (default: 30)")
     report_p.add_argument("--id", type=int, help="Charge Point ID override")
-    report_p.add_argument("--site", help="Site ID override for aggregate site report")
+    report_p.add_argument("--site", "-s", help="Site ID override for aggregate site report")
     report_p.add_argument("--email", action="store_true", help="Send report as PDF via email")
     report_p.add_argument("--json", action="store_true", help="Output raw JSON")
 
     # Analytics
     analytics_p = subparsers.add_parser("analytics", help="View energy consumption curves")
-    analytics_p.add_argument("--resolution", choices=["Day", "Month", "Year"], default="Month",
+    analytics_p.add_argument("--resolution", "-r", choices=["Day", "Month", "Year"], default="Month",
                              help="Telemetry resolution: Day (hourly kW), Month (daily kWh), Year (monthly kWh)")
-    analytics_p.add_argument("--days", type=int, default=30, help="Days to look back (default: 30)")
+    analytics_p.add_argument("--days", "-d", type=int, default=30, help="Days to look back (default: 30)")
     analytics_p.add_argument("--id", type=int, help="Charge Point ID override")
-    analytics_p.add_argument("--site", help="Site ID override for aggregate site analytics")
+    analytics_p.add_argument("--site", "-s", help="Site ID override for aggregate site analytics")
     analytics_p.add_argument("--json", action="store_true", help="Output raw JSON")
 
     # Live Telemetry Stream
     telemetry_p = subparsers.add_parser("telemetry", help="Stream live real-time charging telemetry")
-    telemetry_p.add_argument("--duration", type=int, default=60, help="Stream duration in seconds (default: 60)")
+    telemetry_p.add_argument("--duration", "-d", type=int, default=60, help="Stream duration in seconds (default: 60)")
     telemetry_p.add_argument("--hub", choices=["events", "connector"], default="events",
                              help="SignalR hub ('events' for StatusHub, 'connector' for ConnectorHub)")
-    telemetry_p.add_argument("--transport", choices=["auto", "websocket", "long-polling"], default="auto",
+    telemetry_p.add_argument("--transport", "-t", choices=["auto", "websocket", "long-polling"], default="auto",
                              help="Transport protocol: 'websocket' (requires websockets package), 'long-polling' (standard library), or 'auto' (default: auto)")
 
     # Login
@@ -1068,7 +1068,7 @@ def main() -> None:
         if args.subcommand == "login":
             client.interactive_login(open_browser=not args.no_browser)
 
-        elif args.subcommand == "account":
+        elif args.subcommand == "user":
             user_info = client.get_user_info()
             if getattr(args, "json", False):
                 print(json.dumps(user_info, indent=2))
@@ -1155,7 +1155,7 @@ def main() -> None:
                 print(f"Deleted RFID badge ID {args.id}:")
                 print(json.dumps(res, indent=2) if res else "Success.")
 
-        elif args.subcommand == "pricing":
+        elif args.subcommand == "tariff":
             pricing = client.get_pricing(charge_point_id=args.id, connector_number=args.connector)
             if getattr(args, "json", False):
                 print(json.dumps(pricing, indent=2))
