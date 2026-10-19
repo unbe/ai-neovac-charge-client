@@ -288,7 +288,6 @@ class NeoVacAsyncClient:
         method: str = "GET",
         data: dict[str, Any] | None = None,
         retry_on_401: bool = True,
-        suppress_status_log: tuple[int, ...] = (),
     ) -> Any:
         """Executes an authenticated HTTP request with automatic 401 refresh."""
         if not self.access_token and self.refresh_token:
@@ -311,7 +310,6 @@ class NeoVacAsyncClient:
                     method=method,
                     data=data,
                     retry_on_401=False,
-                    suppress_status_log=suppress_status_log,
                 )
 
             raw_text = await resp.text()
@@ -342,22 +340,13 @@ class NeoVacAsyncClient:
                         )
                         error_msg = raw_text.strip() or f"HTTP {resp.status}"
 
-                if resp.status in suppress_status_log:
-                    _LOGGER.debug(
-                        "NeoVac API request non-success [%s %s]: %s (status %s)",
-                        method,
-                        endpoint,
-                        error_msg,
-                        resp.status,
-                    )
-                else:
-                    _LOGGER.error(
-                        "NeoVac API request failed [%s %s]: %s (status %s)",
-                        method,
-                        endpoint,
-                        error_msg,
-                        resp.status,
-                    )
+                _LOGGER.error(
+                    "NeoVac API request failed [%s %s]: %s (status %s)",
+                    method,
+                    endpoint,
+                    error_msg,
+                    resp.status,
+                )
 
                 raise NeoVacApiError(
                     status_code=resp.status,
