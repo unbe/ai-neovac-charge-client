@@ -83,34 +83,74 @@ def _parse_duration_seconds(raw_val: Any) -> float | None:
     return None
 
 
+def _get_report_sessions(report: dict[str, Any]) -> list[dict[str, Any]]:
+    """Extracts the list of individual charging session records from a report payload."""
+    for key in (
+        "chargePointChargeReports",
+        "chargeProcesses",
+        "processes",
+        "sessions",
+        "items",
+        "reports",
+    ):
+        val = _get_ci(report, key)
+        if isinstance(val, list):
+            return val
+    return []
+
+
+def _get_last_session(report: dict[str, Any]) -> dict[str, Any]:
+    """Returns the most recent completed charging session from the report."""
+    sessions = _get_report_sessions(report)
+    if not sessions:
+        return {}
+    # Sort by chargeProcessEndTime if present
+    sorted_sessions = sorted(
+        sessions,
+        key=lambda s: str(_get_ci(s, "chargeProcessEndTime", "endTime", default="")),
+        reverse=True,
+    )
+    return sorted_sessions[0] if sorted_sessions else {}
+
+
 def _calculate_session_energy(
     coord: NeoVacDataUpdateCoordinator, b: dict[str, Any]
 ) -> float:
-    """Extracts active session accumulated energy in kWh."""
+    """Extracts active session accumulated energy in kWh, falling back to recent session report."""
     live_tx = b.get("live_transaction", {})
-    if not live_tx:
-        return 0.0
     raw_val = _get_ci(
         live_tx,
         "accumulatedEnergyKwH",
         "chargeQuantityInkWh",
         "totalEnergyKwh",
-        default=0.0,
     )
-    try:
-        return round(float(raw_val), 3) if raw_val is not None else 0.0
-    except (ValueError, TypeError) as err:
-        _LOGGER.warning("Failed to parse session energy '%s': %s", raw_val, err)
-        return 0.0
+    if raw_val is not None:
+        try:
+            val = float(raw_val)
+            if val > 0:
+                return round(val, 3)
+        except (ValueError, TypeError) as err:
+            _LOGGER.warning("Failed to parse session energy '%s': %s", raw_val, err)
+
+    # Fallback to last session in report if available
+    last_session = _get_last_session(b.get("report", {}))
+    last_qty = _get_ci(last_session, "chargeQuantityInkWh", "accumulatedEnergyKwH")
+    if last_qty is not None:
+        try:
+            val = float(last_qty)
+            if val > 0:
+                return round(val, 3)
+        except (ValueError, TypeError):
+            pass
+
+    return 0.0
 
 
 def _calculate_session_duration(
     coord: NeoVacDataUpdateCoordinator, b: dict[str, Any]
 ) -> float:
-    """Calculates active session duration in seconds from duration field or startTime."""
+    """Calculates active session duration in seconds from duration field, startTime, or last session report."""
     live_tx = b.get("live_transaction", {})
-    if not live_tx:
-        return 0.0
 
     raw_dur = _get_ci(live_tx, "duration", "totalDuration", "sessionDuration")
     parsed_dur = _parse_duration_seconds(raw_dur)
@@ -152,16 +192,26 @@ def _calculate_session_duration(
                 diff = (now - start_dt).total_seconds()
                 return max(0.0, float(round(diff)))
 
+    # Fallback to last session in report
+    last_session = _get_last_session(b.get("report", {}))
+    last_dur = _get_ci(
+        last_session,
+        "chargeProcessDurationInSeconds",
+        "duration",
+        "durationInSeconds",
+    )
+    parsed_last = _parse_duration_seconds(last_dur)
+    if parsed_last is not None and parsed_last > 0:
+        return parsed_last
+
     return parsed_dur if parsed_dur is not None else 0.0
 
 
 def _calculate_session_cost(
     coord: NeoVacDataUpdateCoordinator, b: dict[str, Any]
 ) -> float:
-    """Calculates active session cost in CHF from price field or energy * tariff."""
+    """Calculates active session cost in CHF from price field, energy * tariff, or last session report."""
     live_tx = b.get("live_transaction", {})
-    if not live_tx:
-        return 0.0
 
     raw_cost = _get_ci(live_tx, "chargePriceInChf", "totalPrice", "costChf")
     if raw_cost is not None:
@@ -172,7 +222,7 @@ def _calculate_session_cost(
         except (ValueError, TypeError):
             _LOGGER.warning("Failed to parse chargePriceInChf '%s' as float", raw_cost)
 
-    # Fallback: calculate from accumulated energy * pricePerkWh or defaultTariffPrice
+    # Fallback 1: calculate from accumulated energy * pricePerkWh or defaultTariffPrice
     energy = _calculate_session_energy(coord, b)
     rate = _get_ci(live_tx, "pricePerkWh") or _get_ci(
         b.get("pricing", {}), "defaultTariffPrice", "pricePerkWh"
@@ -183,43 +233,18 @@ def _calculate_session_cost(
         except (ValueError, TypeError) as err:
             _LOGGER.warning("Failed to compute session cost with rate '%s': %s", rate, err)
 
-    if raw_cost is not None:
+    # Fallback 2: check last session in report
+    last_session = _get_last_session(b.get("report", {}))
+    last_cost = _get_ci(last_session, "chargePriceInChf", "totalPrice")
+    if last_cost is not None:
         try:
-            return float(raw_cost)
+            val = float(last_cost)
+            if val > 0:
+                return round(val, 2)
         except (ValueError, TypeError):
             pass
 
     return 0.0
-
-
-def _get_report_sessions(report: dict[str, Any]) -> list[dict[str, Any]]:
-    """Extracts the list of individual charging session records from a report payload."""
-    for key in (
-        "chargePointChargeReports",
-        "chargeProcesses",
-        "processes",
-        "sessions",
-        "items",
-        "reports",
-    ):
-        val = _get_ci(report, key)
-        if isinstance(val, list):
-            return val
-    return []
-
-
-def _get_last_session(report: dict[str, Any]) -> dict[str, Any]:
-    """Returns the most recent completed charging session from the report."""
-    sessions = _get_report_sessions(report)
-    if not sessions:
-        return {}
-    # Sort by chargeProcessEndTime if present
-    sorted_sessions = sorted(
-        sessions,
-        key=lambda s: str(_get_ci(s, "chargeProcessEndTime", "endTime", default="")),
-        reverse=True,
-    )
-    return sorted_sessions[0] if sorted_sessions else {}
 
 
 def _resolve_rfid_display(

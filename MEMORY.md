@@ -286,7 +286,7 @@ Alongside `neovac_client.py`, the repository provides a HACS-compatible Home Ass
   - SignalR heartbeat keepalive pings (`type: 6`) are handled every 30 seconds.
   - Background tasks run continuously with automatic exponential backoff reconnect (5s to 60s) on disconnects or token expiry.
 - **REST Polling**:
-  - `DataUpdateCoordinator` runs on a 30-second interval (`DEFAULT_SCAN_INTERVAL = 30`) to refresh account-wide metadata, 30-day reports, monthly analytics, RFIDs, and invoices.
+  - `DataUpdateCoordinator` runs on a 900-second interval (`DEFAULT_SCAN_INTERVAL = 900`, 15 minutes) to refresh account-wide metadata, 30-day reports, monthly analytics, RFIDs, and invoices.
   - Live charging status, power, energy, and hardware settings update instantly upon arrival of SignalR messages.
 - **Error Handling & Logging**:
   - Errors, malformed JSON frames, SignalR disconnects, authentication refreshes, and API failures are never swallowed; all exceptions and unexpected payloads are logged as `_LOGGER.warning` or `_LOGGER.error` to appear in Home Assistant logs.

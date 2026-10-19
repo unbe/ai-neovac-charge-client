@@ -688,7 +688,7 @@ class NeoVacAsyncClient:
         headers = {"Authorization": f"Bearer {self.access_token}"}
 
         async with self._session.ws_connect(
-            ws_url, headers=headers, heartbeat=30.0
+            ws_url, headers=headers, autoping=True, heartbeat=None
         ) as ws:
             # 1. Send SignalR JSON v1 Handshake
             await ws.send_str(
@@ -731,12 +731,16 @@ class NeoVacAsyncClient:
                     }
                     await ws.send_str(json.dumps(sub_payload) + RECORD_SEPARATOR)
             elif hub_name == HUB_EVENTS:
-                sub_payload = {
-                    "type": 1,
-                    "target": "SubscribeToTransactionsFromAllSites",
-                    "arguments": [],
-                }
-                await ws.send_str(json.dumps(sub_payload) + RECORD_SEPARATOR)
+                for sub_target in (
+                    "SubscribeToTransactionsFromAllSites",
+                    "SubscribeToStatusFromAllSites",
+                ):
+                    sub_payload = {
+                        "type": 1,
+                        "target": sub_target,
+                        "arguments": [],
+                    }
+                    await ws.send_str(json.dumps(sub_payload) + RECORD_SEPARATOR)
 
             # 3. Read loop
             buffer = ""

@@ -1032,6 +1032,25 @@ class TestNeoVacIntegration(unittest.IsolatedAsyncioTestCase):
         }
         self.assertEqual(sensor._calculate_session_cost(coord, bundle_cost_tariff), 1.75)
 
+        # 7. Fallback to last session report when live_transaction is empty
+        bundle_from_report = {
+            "live_transaction": {},
+            "report": {
+                "chargeProcesses": [
+                    {
+                        "chargeQuantityInkWh": 4.53,
+                        "chargePriceInChf": 1.27,
+                        "chargeProcessDurationInSeconds": "08:00:00",
+                        "chargeProcessEndTime": "2026-10-19T22:00:00Z",
+                    }
+                ]
+            },
+            "pricing": {},
+        }
+        self.assertEqual(sensor._calculate_session_energy(coord, bundle_from_report), 4.53)
+        self.assertEqual(sensor._calculate_session_duration(coord, bundle_from_report), 28800.0)
+        self.assertEqual(sensor._calculate_session_cost(coord, bundle_from_report), 1.27)
+
     def test_error_handling_not_swallowed(self) -> None:
         """Verify that parsing errors, disconnects, and API failures are logged rather than swallowed."""
         _install_ha_stubs()
