@@ -417,7 +417,6 @@ SENSOR_DESCRIPTIONS: tuple[NeoVacSensorEntityDescription, ...] = (
         key="electricity_tariff",
         translation_key="electricity_tariff",
         name="Electricity Tariff",
-        device_class=SensorDeviceClass.MONETARY,
         native_unit_of_measurement="CHF/kWh",
         state_class=SensorStateClass.MEASUREMENT,
         suggested_display_precision=3,

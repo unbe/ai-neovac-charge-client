@@ -742,6 +742,24 @@ class TestNeoVacIntegration(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(sensor_by_key["report_30d_energy"].native_value, 142.5)
                 self.assertEqual(sensor_by_key["last_session_energy"].native_value, 28.4)
                 self.assertEqual(sensor_by_key["electricity_tariff"].native_value, 0.28)
+                self.assertIsNone(sensor_by_key["electricity_tariff"].entity_description.device_class)
+                self.assertEqual(sensor_by_key["electricity_tariff"].entity_description.native_unit_of_measurement, "CHF/kWh")
+
+                # Verify Home Assistant core rule: MONETARY device_class cannot use 'measurement' state_class or compound rate units
+                ha_sensor_mod = sys.modules["homeassistant.components.sensor"]
+                for s in sensors:
+                    desc = s.entity_description
+                    if desc.device_class == ha_sensor_mod.SensorDeviceClass.MONETARY:
+                        self.assertNotEqual(
+                            desc.state_class,
+                            ha_sensor_mod.SensorStateClass.MEASUREMENT,
+                            f"Sensor {desc.key} has monetary device class with measurement state class",
+                        )
+                        self.assertNotIn(
+                            "/",
+                            desc.native_unit_of_measurement or "",
+                            f"Sensor {desc.key} has monetary device class with compound unit",
+                        )
                 self.assertEqual(sensor_by_key["registered_rfids"].native_value, 1)
                 self.assertEqual(sensor_by_key["latest_invoice"].native_value, 45.20)
 
