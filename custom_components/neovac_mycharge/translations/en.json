@@ -1,0 +1,127 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "NeoVac myCharge V Authentication",
+        "description": "Choose how you would like to authenticate with your NeoVac myCharge V account.",
+        "data": {
+          "auth_method": "Authentication Method"
+        }
+      },
+      "pkce": {
+        "title": "Login via NeoVac OAuth2 (PKCE)",
+        "description": "1. Open the following login URL in your browser:\n\n{auth_url}\n\n2. Sign in with your NeoVac credentials.\n3. Copy the redirected URL (`neovacmychargev:///signin-oidc?code=...`) or the `code` parameter and paste it below.",
+        "data": {
+          "redirect_url": "Redirect URL or Authorization Code"
+        }
+      },
+      "token": {
+        "title": "Authenticate with Refresh Token",
+        "description": "Paste an existing OAuth2 Refresh Token (and optional Access Token).",
+        "data": {
+          "refresh_token": "Refresh Token",
+          "access_token": "Access Token (Optional)"
+        }
+      },
+      "reauth_confirm": {
+        "title": "Re-authenticate NeoVac myCharge V",
+        "description": "Your NeoVac session token has expired. Please re-authenticate.",
+        "data": {
+          "auth_method": "Authentication Method"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Failed to connect to NeoVac servers.",
+      "invalid_auth": "Invalid authentication credentials or expired authorization code.",
+      "invalid_code": "Please provide a valid redirect URL or authorization code.",
+      "unknown": "Unexpected error occurred."
+    },
+    "abort": {
+      "already_configured": "This NeoVac account is already configured.",
+      "reauth_successful": "Re-authentication was successful."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "NeoVac myCharge V Options",
+        "data": {
+          "scan_interval": "REST Polling Interval (seconds)",
+          "enable_websocket": "Enable Real-Time SignalR WebSocket Push"
+        }
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "station_status": { "name": "Station Status" },
+      "connector_status": { "name": "Connector Status" },
+      "charging_power": { "name": "Charging Power" },
+      "max_power": { "name": "Max Offered Power" },
+      "session_energy": { "name": "Session Energy" },
+      "session_cost": { "name": "Session Cost" },
+      "session_duration": { "name": "Session Duration" },
+      "active_transaction_id": { "name": "Active Transaction ID" },
+      "active_rfid_badge": { "name": "Active RFID Badge" },
+      "electricity_tariff": { "name": "Electricity Tariff" },
+      "report_30d_energy": { "name": "30-Day Energy" },
+      "report_30d_cost": { "name": "30-Day Cost" },
+      "report_30d_sessions": { "name": "30-Day Sessions" },
+      "last_session_energy": { "name": "Last Session Energy" },
+      "last_session_cost": { "name": "Last Session Cost" },
+      "last_session_end": { "name": "Last Session End" },
+      "monthly_analytics_energy": { "name": "Monthly Analytics Energy" },
+      "registered_rfids": { "name": "Registered RFID Badges" },
+      "latest_invoice": { "name": "Latest Invoice" },
+      "guest_invitations": { "name": "Guest Invitations" }
+    },
+    "binary_sensor": {
+      "online": { "name": "Online" },
+      "cable_plugged_in": { "name": "Cable Plugged In" },
+      "charging": { "name": "Charging" },
+      "problem": { "name": "Problem" },
+      "maintenance_mode": { "name": "Maintenance Mode" }
+    },
+    "switch": {
+      "charging_control": { "name": "Charging" },
+      "permanent_cable_lock": { "name": "Permanent Cable Lock" },
+      "night_charging": { "name": "Night Charging Schedule" },
+      "plug_and_charge": { "name": "Plug & Charge" }
+    },
+    "select": {
+      "rfid_badge": { "name": "Remote Start RFID Badge" }
+    },
+    "button": {
+      "start_charging": { "name": "Start Charging" },
+      "stop_charging": { "name": "Stop Charging" },
+      "request_email_report": { "name": "Send Email Report (30 Days)" },
+      "refresh_data": { "name": "Refresh Station Data" }
+    },
+    "text": {
+      "station_name": { "name": "Station Name" }
+    },
+    "event": {
+      "charging_event": {
+        "name": "Charging Event",
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "charging_started": "Charging Started",
+              "charging_stopped": "Charging Stopped",
+              "charging_paused_ev": "Charging Paused (Vehicle)",
+              "charging_paused_evse": "Charging Paused (Station / Schedule)",
+              "charging_resumed": "Charging Resumed",
+              "cable_plugged_in": "Cable Plugged In",
+              "cable_unplugged": "Cable Unplugged",
+              "transaction_report": "Live Telemetry Update",
+              "price_updated": "Tariff Price Updated",
+              "settings_changed": "Station Settings Changed",
+              "error": "Station Error"
+            }
+          }
+        }
+      }
+    }
+  }
+}

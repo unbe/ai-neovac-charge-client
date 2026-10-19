@@ -1,0 +1,15 @@
+# Sensitive authentication credentials & local identifiers
+neovac_auth.json
+commands.txt
+
+# Python bytecode, virtualenvs & caches
+__pycache__/
+*.py[cod]
+*$py.class
+.venv*
+venv/
+
+# Android decompilation binaries (large)
+*.apk
+*.xapk
+*.dll

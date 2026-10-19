@@ -1,0 +1,127 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "NeoVac myCharge V Anmeldung",
+        "description": "Wählen Sie die gewünschte Anmeldemethode für Ihr NeoVac myCharge V Konto.",
+        "data": {
+          "auth_method": "Anmeldemethode"
+        }
+      },
+      "pkce": {
+        "title": "Anmeldung über NeoVac OAuth2 (PKCE)",
+        "description": "1. Öffnen Sie folgende Anmelde-URL im Browser:\n\n{auth_url}\n\n2. Melden Sie sich mit Ihrem NeoVac-Konto an.\n3. Kopieren Sie die Weiterleitungs-URL (`neovacmychargev:///signin-oidc?code=...`) oder den `code`-Parameter hierher.",
+        "data": {
+          "redirect_url": "Weiterleitungs-URL oder Autorisierungscode"
+        }
+      },
+      "token": {
+        "title": "Anmeldung mit Refresh-Token",
+        "description": "Geben Sie ein vorhandenes OAuth2 Refresh-Token ein.",
+        "data": {
+          "refresh_token": "Refresh-Token",
+          "access_token": "Access-Token (Optional)"
+        }
+      },
+      "reauth_confirm": {
+        "title": "NeoVac myCharge V erneut authentifizieren",
+        "description": "Ihre NeoVac-Sitzung ist abgelaufen. Bitte melden Sie sich erneut an.",
+        "data": {
+          "auth_method": "Anmeldemethode"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Verbindung zu den NeoVac-Servern fehlgeschlagen.",
+      "invalid_auth": "Ungültige Zugangsdaten oder abgelaufener Code.",
+      "invalid_code": "Bitte eine gültige Weiterleitungs-URL oder einen Code eingeben.",
+      "unknown": "Ein unerwarteter Fehler ist aufgetreten."
+    },
+    "abort": {
+      "already_configured": "Dieses NeoVac-Konto ist bereits eingerichtet.",
+      "reauth_successful": "Erneute Authentifizierung erfolgreich."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "NeoVac myCharge V Optionen",
+        "data": {
+          "scan_interval": "REST-Abfrageintervall (Sekunden)",
+          "enable_websocket": "Echtzeit-SignalR-WebSocket aktivieren"
+        }
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "station_status": { "name": "Stationsstatus" },
+      "connector_status": { "name": "Anschlussstatus" },
+      "charging_power": { "name": "Ladeleistung" },
+      "max_power": { "name": "Max. Ladeleistung" },
+      "session_energy": { "name": "Geladene Energie (Sitzung)" },
+      "session_cost": { "name": "Ladekosten (Sitzung)" },
+      "session_duration": { "name": "Ladedauer (Sitzung)" },
+      "active_transaction_id": { "name": "Aktive Transaktions-ID" },
+      "active_rfid_badge": { "name": "Aktiver RFID-Badge" },
+      "electricity_tariff": { "name": "Stromtarif" },
+      "report_30d_energy": { "name": "Energie (30 Tage)" },
+      "report_30d_cost": { "name": "Kosten (30 Tage)" },
+      "report_30d_sessions": { "name": "Ladevorgänge (30 Tage)" },
+      "last_session_energy": { "name": "Letzte Ladung Energie" },
+      "last_session_cost": { "name": "Letzte Ladung Kosten" },
+      "last_session_end": { "name": "Letzte Ladung Ende" },
+      "monthly_analytics_energy": { "name": "Monatsanalyse Energie" },
+      "registered_rfids": { "name": "Registrierte RFID-Badges" },
+      "latest_invoice": { "name": "Letzte Rechnung" },
+      "guest_invitations": { "name": "Gasteinladungen" }
+    },
+    "binary_sensor": {
+      "online": { "name": "Online" },
+      "cable_plugged_in": { "name": "Kabel eingesteckt" },
+      "charging": { "name": "Lädt" },
+      "problem": { "name": "Störung" },
+      "maintenance_mode": { "name": "Wartungsmodus" }
+    },
+    "switch": {
+      "charging_control": { "name": "Ladevorgang" },
+      "permanent_cable_lock": { "name": "Kabel permanent verriegeln" },
+      "night_charging": { "name": "Nachtladung (22:00 - 06:00)" },
+      "plug_and_charge": { "name": "Plug & Charge" }
+    },
+    "select": {
+      "rfid_badge": { "name": "RFID-Badge für Fernstart" }
+    },
+    "button": {
+      "start_charging": { "name": "Laden starten" },
+      "stop_charging": { "name": "Laden stoppen" },
+      "request_email_report": { "name": "E-Mail-Bericht senden (30 Tage)" },
+      "refresh_data": { "name": "Daten aktualisieren" }
+    },
+    "text": {
+      "station_name": { "name": "Stationsname" }
+    },
+    "event": {
+      "charging_event": {
+        "name": "Ladeereignis",
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "charging_started": "Ladevorgang gestartet",
+              "charging_stopped": "Ladevorgang beendet",
+              "charging_paused_ev": "Ladevorgang pausiert (Fahrzeug)",
+              "charging_paused_evse": "Ladevorgang pausiert (Station / Zeitplan)",
+              "charging_resumed": "Ladevorgang fortgesetzt",
+              "cable_plugged_in": "Kabel eingesteckt",
+              "cable_unplugged": "Kabel ausgesteckt",
+              "transaction_report": "Live-Telemetrie",
+              "price_updated": "Tarif aktualisiert",
+              "settings_changed": "Einstellungen geändert",
+              "error": "Stationsfehler"
+            }
+          }
+        }
+      }
+    }
+  }
+}

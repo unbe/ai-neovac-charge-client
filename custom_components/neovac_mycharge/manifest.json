@@ -1,0 +1,11 @@
+{
+  "domain": "neovac_mycharge",
+  "name": "NeoVac myCharge V",
+  "codeowners": ["@unbe"],
+  "config_flow": true,
+  "documentation": "https://github.com/unbe/ai-chargeV",
+  "iot_class": "cloud_push",
+  "issue_tracker": "https://github.com/unbe/ai-chargeV/issues",
+  "requirements": [],
+  "version": "1.0.0"
+}

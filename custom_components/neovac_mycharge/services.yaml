@@ -1,0 +1,137 @@
+start_charging:
+  name: Start Charging
+  description: Sends a remote start transaction command to a NeoVac charging station.
+  fields:
+    charge_point_id:
+      name: Charge Point ID
+      description: Optional numeric Charge Point ID (defaults to primary station).
+      example: 1001
+      selector:
+        number:
+          min: 1
+          mode: box
+    rfid_tag:
+      name: RFID Tag UID
+      description: Optional hardware RFID UID hex string to authorize the session.
+      example: "01020304050607"
+      selector:
+        text:
+
+stop_charging:
+  name: Stop Charging
+  description: Sends a remote stop transaction command to a NeoVac charging station.
+  fields:
+    charge_point_id:
+      name: Charge Point ID
+      description: Optional numeric Charge Point ID (defaults to primary station).
+      example: 1001
+      selector:
+        number:
+          min: 1
+          mode: box
+
+add_rfid:
+  name: Register RFID Badge
+  description: Registers a new physical RFID badge on the NeoVac account.
+  fields:
+    rfid_tag:
+      name: RFID Tag UID
+      description: Hardware UID hex string of the RFID badge.
+      required: true
+      example: "01020304050607"
+      selector:
+        text:
+    rfid_name:
+      name: Badge Name
+      description: Human-readable display name for the RFID badge.
+      required: true
+      example: "Primary Badge"
+      selector:
+        text:
+
+rename_rfid:
+  name: Rename RFID Badge
+  description: Updates the display name of an existing registered RFID badge.
+  fields:
+    rfid_id:
+      name: RFID Database ID
+      description: Numeric ID of the registered RFID badge (visible in the Registered RFID Badges sensor attributes).
+      required: true
+      example: 1
+      selector:
+        number:
+          min: 1
+          mode: box
+    rfid_name:
+      name: New Badge Name
+      description: New display name for the RFID badge.
+      required: true
+      example: "Family EV Badge"
+      selector:
+        text:
+
+delete_rfid:
+  name: Delete RFID Badge
+  description: Removes a registered RFID badge from the NeoVac account.
+  fields:
+    rfid_id:
+      name: RFID Database ID
+      description: Numeric ID of the registered RFID badge to delete.
+      required: true
+      example: 1
+      selector:
+        number:
+          min: 1
+          mode: box
+
+request_email_report:
+  name: Request Email PDF Report
+  description: Triggers generating and emailing a PDF charging report for the given period.
+  fields:
+    charge_point_id:
+      name: Charge Point ID
+      description: Optional numeric Charge Point ID.
+      example: 1001
+      selector:
+        number:
+          min: 1
+          mode: box
+    days:
+      name: Days Lookback
+      description: Number of days to look back if explicit dates are omitted.
+      default: 30
+      selector:
+        number:
+          min: 1
+          max: 365
+    earliest_date:
+      name: Earliest Date (YYYY-MM-DD)
+      description: Optional start date in YYYY-MM-DD format.
+      example: "2026-01-01"
+      selector:
+        text:
+    latest_date:
+      name: Latest Date (YYYY-MM-DD)
+      description: Optional end date in YYYY-MM-DD format.
+      example: "2026-01-31"
+      selector:
+        text:
+
+download_invoice_pdf:
+  name: Download Invoice PDF
+  description: Downloads a billing invoice PDF and saves it to a local file path.
+  fields:
+    invoice_id:
+      name: Invoice ID
+      description: Identifier of the invoice to download.
+      required: true
+      example: "100"
+      selector:
+        text:
+    target_path:
+      name: Target File Path
+      description: Local path where the PDF file should be written.
+      required: true
+      example: "/config/www/invoice.pdf"
+      selector:
+        text:
