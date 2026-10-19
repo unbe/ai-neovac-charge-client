@@ -807,6 +807,45 @@ class TestNeoVacIntegration(unittest.IsolatedAsyncioTestCase):
                 self.assertIn("neovac_mycharge_charging_started", fired_types)
                 self.assertIn("neovac_mycharge_transaction_report", fired_types)
 
+                # Test ReceiveConnectorTransactionUpdate frame (StatusHub push)
+                await coord.async_handle_signalr_event(
+                    "ReceiveConnectorTransactionUpdate",
+                    [
+                        {
+                            "transactionId": 200206578,
+                            "accumulatedEnergyKwH": 4.5287000200807,
+                            "currentPowerKw": 0,
+                            "duration": "08:48:35",
+                            "start": "2026-10-19T13:39:44+00:00",
+                            "end": None,
+                            "connectorId": 1,
+                            "maxPowerKw": 11.23,
+                            "chargePointSerialNumber": "SN-TEST-01",
+                        }
+                    ],
+                )
+                self.assertEqual(sensor_by_key["session_energy"].native_value, 4.529)
+                self.assertEqual(sensor_by_key["session_duration"].native_value, 31715.0)
+                self.assertEqual(sensor_by_key["active_transaction_id"].native_value, 200206578)
+                self.assertEqual(sensor_by_key["max_power"].native_value, 11.23)
+
+                # Test ReceiveChargePointSiteStatusFullUpdate connector list
+                await coord.async_handle_signalr_event(
+                    "ReceiveChargePointSiteStatusFullUpdate",
+                    [
+                        [
+                            {
+                                "chargePointSerialNo": "SN-TEST-01",
+                                "connectorId": 1,
+                                "status": "Connected",
+                                "ocppStatus": "SuspendedEV",
+                                "isOnline": True,
+                            }
+                        ]
+                    ],
+                )
+                self.assertEqual(sensor_by_key["station_status"].native_value, "SuspendedEV")
+
                 # Test diagnostics redaction
                 diag = await diagnostics.async_get_config_entry_diagnostics(hass, entry)
                 diag_str = json.dumps(diag)

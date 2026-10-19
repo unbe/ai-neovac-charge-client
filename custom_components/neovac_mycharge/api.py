@@ -321,25 +321,26 @@ class NeoVacAsyncClient:
             if resp.status >= 400:
                 parsed_data: dict[str, Any] = {}
                 error_msg = f"HTTP {resp.status}"
-                try:
-                    parsed = json.loads(raw_text)
-                    if isinstance(parsed, dict):
-                        parsed_data = parsed
-                        error_msg = (
-                            parsed.get("message")
-                            or parsed.get("error_description")
-                            or parsed.get("error")
-                            or str(parsed)
+                if raw_text.strip():
+                    try:
+                        parsed = json.loads(raw_text)
+                        if isinstance(parsed, dict):
+                            parsed_data = parsed
+                            error_msg = (
+                                parsed.get("message")
+                                or parsed.get("error_description")
+                                or parsed.get("error")
+                                or str(parsed)
+                            )
+                    except Exception as err:
+                        _LOGGER.warning(
+                            "Failed to parse error response JSON for %s %s: %s (body preview: %s)",
+                            method,
+                            endpoint,
+                            err,
+                            raw_text[:200],
                         )
-                except Exception as err:
-                    _LOGGER.warning(
-                        "Failed to parse error response JSON for %s %s: %s (body preview: %s)",
-                        method,
-                        endpoint,
-                        err,
-                        raw_text[:200],
-                    )
-                    error_msg = raw_text.strip() or f"HTTP {resp.status}"
+                        error_msg = raw_text.strip() or f"HTTP {resp.status}"
 
                 if resp.status in suppress_status_log:
                     _LOGGER.debug(

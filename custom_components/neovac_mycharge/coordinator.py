@@ -383,6 +383,43 @@ class NeoVacDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             if not charge_points:
                 return
 
+            # Special case: ReceiveChargePointSiteStatusFullUpdate sends a list of connectors in arguments[0]
+            if target == "ReceiveChargePointSiteStatusFullUpdate" and arguments and isinstance(arguments[0], list):
+                for item in arguments[0]:
+                    if not isinstance(item, dict):
+                        continue
+                    serial = _get_ci(
+                        item, "chargePointSerialNo", "chargePointSerialNumber", "serialNumber"
+                    )
+                    raw_id = _get_ci(item, "chargePointId")
+                    target_cp_id = int(raw_id) if raw_id is not None else None
+                    if target_cp_id is None and serial:
+                        for cid, cb in charge_points.items():
+                            if _get_ci(cb.get("info", {}), "serialNumber") == serial:
+                                target_cp_id = cid
+                                break
+                    if target_cp_id is None and len(charge_points) == 1:
+                        target_cp_id = next(iter(charge_points.keys()))
+
+                    if target_cp_id and target_cp_id in charge_points:
+                        cb_info = charge_points[target_cp_id]["info"]
+                        is_online = _get_ci(item, "isOnline")
+                        if is_online is not None:
+                            cb_info["isOnline"] = bool(is_online)
+                        conn_id = _get_ci(item, "connectorId")
+                        new_st = _get_ci(item, "ocppStatus", "status")
+                        if (conn_id == 1 or conn_id is None) and new_st:
+                            cb_info["status"] = new_st
+                            cb_info["connectorZeroStatus"] = new_st
+                            self._check_and_emit_status_transitions(
+                                target_cp_id,
+                                new_st,
+                                error_code=_get_ci(item, "errorCode"),
+                                extra=item,
+                            )
+                self.async_set_updated_data(self.data)
+                return
+
             # Resolve target charge_point_id from payload (or default to single station)
             raw_cp_id = _get_ci(first_arg, "chargePointId")
             serial = _get_ci(
@@ -405,7 +442,7 @@ class NeoVacDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             cp_bundle = charge_points[cp_id]
             cp_info = cp_bundle["info"]
 
-            if target == "OnTransactionReport":
+            if target in ("OnTransactionReport", "ReceiveConnectorTransactionUpdate"):
                 live_tx = {**self._live_transactions.get(cp_id, {}), **first_arg}
                 has_end = bool(_get_ci(first_arg, "end", "hasEnd", "transactionEnded", default=False))
                 tx_status = _get_ci(first_arg, "status", "ocppStatus")
@@ -464,9 +501,7 @@ class NeoVacDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 self.async_set_updated_data(self.data)
 
             elif target in (
-                "ReceiveConnectorTransactionUpdate",
                 "ReceiveChargePointSiteStatusUpdate",
-                "ReceiveChargePointSiteStatusFullUpdate",
                 "ConnectorChanged",
                 "StatusNotificationReceivedIntegrationEvent",
             ):

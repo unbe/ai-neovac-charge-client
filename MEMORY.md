@@ -185,12 +185,13 @@ The backend uses ASP.NET Core SignalR with two distinct hubs:
 
 ### 1. Hubs
 - **StatusHub**: `https://mycharge.neovac.ch/mobile/hubs/events`
-  - Global site updates and high-level notifications.
+  - Global site updates, connector status, and continuous transaction telemetry across all user stations.
   - Handshake: JSON protocol v1.
-  - Subscription: `{"type": 1, "target": "SubscribeToTransactionsFromAllSites", "arguments": []}`.
+  - Subscriptions: `SubscribeToTransactionsFromAllSites` and `SubscribeToStatusFromAllSites`.
   - Target Events:
+    - `ReceiveConnectorTransactionUpdate`: Primary live session stream carrying `accumulatedEnergyKwH`, `currentPowerKw`, `maxPowerKw`, `duration`, `start`, `end`, `transactionId`, `chargePointSerialNumber`, and `totalPrice`.
+    - `ReceiveChargePointSiteStatusFullUpdate`: Array of connector status items (`ocppStatus` e.g. `SuspendedEV`, `status` e.g. `Connected`, `isOnline`).
     - `ReceiveChargePointSiteStatusUpdate`
-    - `ReceiveChargePointSiteStatusFullUpdate`
     - `ConnectorChanged`
     - `ConnectorChangedPlugAndCharge`
     - `ConnectorChangedPermanentCableLock`
@@ -202,7 +203,6 @@ The backend uses ASP.NET Core SignalR with two distinct hubs:
     - `LeaveConnectorAsync(chargePointId, connectorNumber)`
   - Target Events:
     - `OnTransactionReport`: Real-time session report (`TransactionReportMobileDto`) with power (kW), delivered energy (kWh), duration, and end-of-transaction flags.
-    - `ReceiveConnectorTransactionUpdate`
     - `StartTransactionNotification` / `StopTransactionNotification`
 
 ### 2. Transport Protocols (WebSockets & Long-Polling)

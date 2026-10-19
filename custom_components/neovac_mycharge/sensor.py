@@ -164,6 +164,7 @@ def _calculate_session_duration(
         "transactionStartTime",
         "startedAt",
         "startDate",
+        "start",
     )
     if start_str:
         start_dt = _parse_timestamp(start_str)
@@ -178,6 +179,7 @@ def _calculate_session_duration(
                 "transactionEndTime",
                 "endedAt",
                 "endDate",
+                "end",
             )
             end_dt = (
                 _parse_timestamp(end_str)
@@ -383,12 +385,14 @@ SENSOR_DESCRIPTIONS: tuple[NeoVacSensorEntityDescription, ...] = (
                 "startTime",
                 "chargeProcessStartTime",
                 "startedAt",
+                "start",
             ),
             "end_time": _get_ci(
                 b.get("live_transaction", {}),
                 "endTime",
                 "chargeProcessEndTime",
                 "endedAt",
+                "end",
             ),
         },
     ),
