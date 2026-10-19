@@ -544,11 +544,13 @@ class TestNeoVacIntegration(unittest.IsolatedAsyncioTestCase):
         async def handle_pricing(request: web.Request) -> web.Response:
             return web.json_response(
                 {
-                    "defaultTariffName": "Standard Tariff",
-                    "defaultTariffPrice": 0.28,
-                    "tariffTimeDetails": [
-                        {"name": "Day", "pricePerkWh": 0.28, "startTime": "06:00", "endTime": "22:00"}
-                    ],
+                    "pricingDetails": {
+                        "defaultTariffName": "Standard Tariff",
+                        "defaultTariffPrice": 0.28,
+                        "tariffTimeDetails": [
+                            {"name": "Day", "pricePerkWh": 0.28, "startTime": "06:00", "endTime": "22:00"}
+                        ],
+                    }
                 }
             )
 
@@ -646,6 +648,7 @@ class TestNeoVacIntegration(unittest.IsolatedAsyncioTestCase):
         app.router.add_post("/mobile/api/user/rfid", handle_rfids)
         app.router.add_get("/mobile/api/charge-point/1001/report", handle_report)
         app.router.add_get("/mobile/api/charge-point/1001/analytics", handle_analytics)
+        app.router.add_get("/mobile/api/charge-point/1001/pricing-details", handle_pricing)
         app.router.add_get("/mobile/api/pricing/1001/1", handle_pricing)
         app.router.add_get("/mobile/api/billing/invoices", handle_invoices)
         app.router.add_get("/mobile/api/billing/invoices/INV-1/pdf", handle_invoice_pdf)
@@ -1075,6 +1078,69 @@ class TestNeoVacIntegration(unittest.IsolatedAsyncioTestCase):
             val = sensor._parse_timestamp("not-a-valid-date")
             self.assertIsNone(val)
             self.assertTrue(any("Failed to parse timestamp" in msg for msg in cm.output))
+
+    async def test_pricing_endpoint_and_fallback(self) -> None:
+        """Verify that async_get_pricing calls /charge-point/{id}/pricing-details and falls back on 404."""
+        _install_ha_stubs()
+        from custom_components.neovac_mycharge import api
+
+        calls: list[str] = []
+
+        async def handler_primary(request: web.Request) -> web.Response:
+            calls.append(request.path)
+            return web.json_response({
+                "pricingDetails": {
+                    "defaultTariffName": "Einheitstarif",
+                    "defaultTariffPrice": 0.32,
+                    "tariffTimeDetails": [],
+                }
+            })
+
+        async def handler_404(request: web.Request) -> web.Response:
+            calls.append(request.path)
+            return web.json_response({"message": "Not Found"}, status=404)
+
+        async def handler_legacy(request: web.Request) -> web.Response:
+            calls.append(request.path)
+            return web.json_response({
+                "defaultTariffName": "Legacy Tariff",
+                "defaultTariffPrice": 0.25,
+            })
+
+        app = web.Application()
+        app.router.add_get("/mobile/api/charge-point/101/pricing-details", handler_primary)
+        app.router.add_get("/mobile/api/charge-point/102/pricing-details", handler_404)
+        app.router.add_get("/mobile/api/pricing/102/1", handler_legacy)
+
+        runner = web.AppRunner(app)
+        await runner.setup()
+        site = web.TCPSite(runner, "127.0.0.1", 0)
+        await site.start()
+        port = site._server.sockets[0].getsockname()[1]  # type: ignore[union-attr]
+
+        try:
+            import aiohttp
+            async with aiohttp.ClientSession() as session:
+                client = api.NeoVacAsyncClient(
+                    session=session,
+                    api_base=f"http://127.0.0.1:{port}",
+                    access_token="valid_token",
+                )
+
+                # 1. Primary endpoint works and unwraps
+                p1 = await client.async_get_pricing(101, 1)
+                self.assertEqual(p1.get("defaultTariffName"), "Einheitstarif")
+                self.assertEqual(p1.get("defaultTariffPrice"), 0.32)
+                self.assertIn("/mobile/api/charge-point/101/pricing-details", calls)
+
+                # 2. Primary 404 falls back to legacy route
+                p2 = await client.async_get_pricing(102, 1)
+                self.assertEqual(p2.get("defaultTariffName"), "Legacy Tariff")
+                self.assertEqual(p2.get("defaultTariffPrice"), 0.25)
+                self.assertIn("/mobile/api/charge-point/102/pricing-details", calls)
+                self.assertIn("/mobile/api/pricing/102/1", calls)
+        finally:
+            await runner.cleanup()
 
 
 if __name__ == "__main__":

@@ -215,11 +215,12 @@ class NeoVacDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     continue
                 cp_id = int(raw_cp_id)
 
+                conn_num = int(_get_ci(cp, "connectorNumber", default=1) or 1)
                 # Fetch per-station report, analytics, pricing, and guest invitations concurrently
                 cp_tasks = await asyncio.gather(
                     self.client.async_get_charge_report(cp_id),
                     self.client.async_get_analytics(cp_id, resolution="Month"),
-                    self.client.async_get_pricing(cp_id, 1),
+                    self.client.async_get_pricing(cp_id, conn_num),
                     self.client.async_get_guest_invitations(cp_id),
                     return_exceptions=True,
                 )

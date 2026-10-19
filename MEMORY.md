@@ -156,8 +156,9 @@ All remote commands are dispatched under `/mobile/api/charge-point/`:
   - `Year`: Monthly energy consumption in kWh.
 
 ### 5. Pricing & Invoices
-- **Connector Pricing**: `GET /mobile/api/pricing/{chargePointId}/{connectorNumber}`
-  - Returns `PricingDetailsDto`: `defaultTariffName`, `defaultTariffPrice`, `tariffTimeDetails`.
+- **Connector Pricing**: `GET /mobile/api/charge-point/{chargePointId}/pricing-details` (fallback: `GET /mobile/api/pricing/{chargePointId}/{connectorNumber}`)
+  - Returns `PricingDetailsDto` wrapped under `pricingDetails`: `defaultTariffName`, `defaultTariffPrice`, `tariffTimeDetails`.
+  - Client merges `pricingDetails` into the root dictionary so `defaultTariffName` and `defaultTariffPrice` are immediately accessible.
 - **List Invoices**: `GET /mobile/api/billing/invoices`
 - **Download Invoice PDF**: `GET /mobile/api/billing/invoices/{id}/pdf`
 
@@ -257,7 +258,7 @@ Alongside `neovac_client.py`, the repository provides a HACS-compatible Home Ass
   - Uses Home Assistant's shared `aiohttp.ClientSession` (`async_get_clientsession(hass)`).
   - Handles OAuth2 PKCE generation/exchange, automatic `401` token refresh with a callback to persist rotated tokens into `ConfigEntry.data`, all REST API calls, and `aiohttp` WebSocket SignalR streaming (`async_stream_signalr_hub`).
 - **`coordinator.py` (`NeoVacDataUpdateCoordinator`)**:
-  - Polls `/user/info`, `/user/rfid`, `/billing/invoices`, `/user/notification/settings`, and per-station `/report`, `/analytics`, `/pricing/{id}/1`, and `/guest-invitation`.
+  - Polls `/user/info`, `/user/rfid`, `/billing/invoices`, `/user/notification/settings`, and per-station `/report`, `/analytics`, `/charge-point/{id}/pricing-details` (or legacy `/pricing/{id}/{conn}`), and `/guest-invitation`.
   - Runs persistent background tasks for both `StatusHub` (`events`) and `ConnectorHub` (`connector`) with exponential backoff reconnect.
   - Merges real-time SignalR push frames (`OnTransactionReport`, `PriceUpdate`, `ReceiveConnectorTransactionUpdate`, `ReceiveChargePointSiteStatusUpdate`, `ConnectorChanged*`) directly into coordinator data (`async_set_updated_data`).
   - Automatically triggers a REST refresh when `OnTransactionReport` reports `end=True` or `StopTransactionNotification` arrives so 30-day reports and last-session sensors immediately update.

@@ -288,6 +288,7 @@ class NeoVacAsyncClient:
         method: str = "GET",
         data: dict[str, Any] | None = None,
         retry_on_401: bool = True,
+        suppress_status_log: tuple[int, ...] = (),
     ) -> Any:
         """Executes an authenticated HTTP request with automatic 401 refresh."""
         if not self.access_token and self.refresh_token:
@@ -306,7 +307,11 @@ class NeoVacAsyncClient:
             if resp.status == 401 and retry_on_401 and self.refresh_token:
                 await self.async_refresh_access_token()
                 return await self._request(
-                    endpoint, method=method, data=data, retry_on_401=False
+                    endpoint,
+                    method=method,
+                    data=data,
+                    retry_on_401=False,
+                    suppress_status_log=suppress_status_log,
                 )
 
             raw_text = await resp.text()
@@ -336,13 +341,22 @@ class NeoVacAsyncClient:
                     )
                     error_msg = raw_text.strip() or f"HTTP {resp.status}"
 
-                _LOGGER.error(
-                    "NeoVac API request failed [%s %s]: %s (status %s)",
-                    method,
-                    endpoint,
-                    error_msg,
-                    resp.status,
-                )
+                if resp.status in suppress_status_log:
+                    _LOGGER.debug(
+                        "NeoVac API request non-success [%s %s]: %s (status %s)",
+                        method,
+                        endpoint,
+                        error_msg,
+                        resp.status,
+                    )
+                else:
+                    _LOGGER.error(
+                        "NeoVac API request failed [%s %s]: %s (status %s)",
+                        method,
+                        endpoint,
+                        error_msg,
+                        resp.status,
+                    )
 
                 raise NeoVacApiError(
                     status_code=resp.status,
@@ -573,10 +587,22 @@ class NeoVacAsyncClient:
         self, charge_point_id: int, connector_number: int = 1
     ) -> dict[str, Any]:
         """Fetches active electricity tariffs and connector pricing."""
-        res = await self._request(
-            f"/mobile/api/pricing/{int(charge_point_id)}/{int(connector_number)}",
-            method="GET",
-        )
+        try:
+            res = await self._request(
+                f"/mobile/api/charge-point/{int(charge_point_id)}/pricing-details",
+                method="GET",
+                suppress_status_log=(404,),
+            )
+        except NeoVacApiError as err:
+            if err.status_code == 404:
+                res = await self._request(
+                    f"/mobile/api/pricing/{int(charge_point_id)}/{int(connector_number)}",
+                    method="GET",
+                )
+            else:
+                raise
+        if isinstance(res, dict) and "pricingDetails" in res and isinstance(res["pricingDetails"], dict):
+            return {**res, **res["pricingDetails"]}
         return res if isinstance(res, dict) else {}
 
     async def async_list_invoices(self) -> list[dict[str, Any]]:

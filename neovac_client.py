@@ -876,9 +876,17 @@ class NeoVacClient:
     ) -> dict[str, Any]:
         """Retrieves active electricity tariffs and connector pricing."""
         cpid = charge_point_id or self.default_charge_point_id
-        return self._request(
-            f"/mobile/api/pricing/{cpid}/{connector_number}", method="GET"
-        )
+        try:
+            res = self._request(
+                f"/mobile/api/charge-point/{cpid}/pricing-details", method="GET"
+            )
+        except Exception:
+            res = self._request(
+                f"/mobile/api/pricing/{cpid}/{connector_number}", method="GET"
+            )
+        if isinstance(res, dict) and "pricingDetails" in res and isinstance(res["pricingDetails"], dict):
+            return {**res, **res["pricingDetails"]}
+        return res if isinstance(res, dict) else {}
 
     def list_invoices(self) -> list[dict[str, Any]]:
         """Lists billing records and monthly charging invoices."""
@@ -1160,18 +1168,34 @@ def main() -> None:
             if getattr(args, "json", False):
                 print(json.dumps(pricing, indent=2))
             else:
-                name = pricing.get("pricingPlanName") or pricing.get("name") or "Standard"
-                curr = pricing.get("currency", "CHF")
-                vat = pricing.get("vatPercent")
+                details = pricing.get("pricingDetails", pricing)
+                name = (
+                    details.get("defaultTariffName")
+                    or details.get("pricingPlanName")
+                    or details.get("name")
+                    or "Standard"
+                )
+                curr = details.get("currency", "CHF")
+                vat = details.get("vatPercent")
                 print(f"Tariff Plan:   {name}")
-                if "pricePerKwh" in pricing:
-                    print(f"Energy Price:  {pricing['pricePerKwh']:.4f} {curr}/kWh")
-                if "pricePerMinute" in pricing:
-                    print(f"Time Price:    {pricing['pricePerMinute']:.4f} {curr}/min")
-                if "startFee" in pricing:
-                    print(f"Starting Fee:  {pricing['startFee']:.2f} {curr}")
+                price_per_kwh = details.get("defaultTariffPrice") or details.get("pricePerKwh")
+                if price_per_kwh is not None:
+                    print(f"Energy Price:  {price_per_kwh:.4f} {curr}/kWh")
+                if "pricePerMinute" in details:
+                    print(f"Time Price:    {details['pricePerMinute']:.4f} {curr}/min")
+                if "startFee" in details:
+                    print(f"Starting Fee:  {details['startFee']:.2f} {curr}")
                 if vat is not None:
                     print(f"VAT:           {vat}%")
+                schedule = details.get("tariffTimeDetails") or []
+                if schedule:
+                    print("Schedule:")
+                    for s in schedule:
+                        s_name = s.get("name", "Slot")
+                        s_price = s.get("pricePerkWh", 0.0)
+                        s_start = s.get("startTime", "")
+                        s_end = s.get("endTime", "")
+                        print(f"  - {s_name} ({s_start} - {s_end}): {s_price:.4f} {curr}/kWh")
 
         elif args.subcommand == "invoices":
             action = getattr(args, "invoice_action", None) or "list"
