@@ -270,8 +270,8 @@ Alongside `neovac_client.py`, the repository provides a HACS-compatible Home Ass
 - **Platforms**:
   - `sensor.py`: 20 sensors per station (Status, Connector Status, Charging Power, Max Power, Session Energy, Session Cost, Session Duration, Active Transaction ID, Active RFID Badge, Electricity Tariff, 30-Day Energy/Cost/Sessions, Last Session Energy/Cost/End, Monthly Analytics Energy, Registered RFID Badges, Latest Invoice, Guest Invitations).
     - `session_duration`: Evaluates active session duration directly from `duration` if present (>0), or dynamically computes elapsed time from `startTime` (`now - startTime`, or `endTime - startTime` if finished) to accurately match the mobile app when the station reports 0 in `duration`. Exposes `start_time` and `end_time` in attributes.
-    - `session_cost`: Evaluates cost from `chargePriceInChf` if present (>0), or calculates dynamically from `accumulatedEnergyKwH * pricePerkWh` (or station tariff). Exposes `price_per_kwh` and `calculated: true/false` in attributes.
-    - `session_energy`: Reads live `accumulatedEnergyKwH` or `chargeQuantityInkWh` from the active transaction.
+    - `session_cost`: Evaluates cost strictly from given `chargePriceInChf` / `totalPrice` in the active transaction or recent session report without dynamic tariff calculations. Exposes `price_per_kwh` in attributes.
+    - `session_energy`: Reads live `accumulatedEnergyKwH` or `chargeQuantityInkWh` from the active transaction, falling back to recent session report.
   - `binary_sensor.py`: 5 binary sensors (Online, Cable Plugged In, Charging, Problem, Maintenance Mode).
   - `switch.py`: 4 switches (Charging Start/Stop [hidden by default via entity_registry_visible_default=False to avoid dashboard clutter with buttons], Permanent Cable Lock, Night Charging Schedule, Plug & Charge).
   - `select.py`: Dynamic RFID badge selector used when remote-starting a charge.

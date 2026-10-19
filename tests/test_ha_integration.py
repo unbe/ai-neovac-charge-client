@@ -1010,27 +1010,16 @@ class TestNeoVacIntegration(unittest.IsolatedAsyncioTestCase):
         }
         self.assertEqual(sensor._calculate_session_cost(coord, bundle_cost_direct), 2.50)
 
-        # 5. Cost calculated from accumulated energy (4.5287 kWh) * live pricePerkWh (0.28)
-        bundle_cost_calc = {
+        # 5. Cost when chargePriceInChf is 0/absent: does NOT calculate dynamically from tariff, returns 0.0
+        bundle_cost_zero = {
             "live_transaction": {
                 "chargePriceInChf": 0.0,
                 "accumulatedEnergyKwH": 4.5287000200807,
                 "pricePerkWh": 0.28,
             },
-            "pricing": {},
-        }
-        # 4.5287000200807 * 0.28 = 1.268036 -> 1.27 CHF
-        self.assertEqual(sensor._calculate_session_cost(coord, bundle_cost_calc), 1.27)
-
-        # 6. Cost calculated from accumulated energy * pricing defaultTariffPrice
-        bundle_cost_tariff = {
-            "live_transaction": {
-                "chargePriceInChf": 0.0,
-                "accumulatedEnergyKwH": 5.0,
-            },
             "pricing": {"defaultTariffPrice": 0.35},
         }
-        self.assertEqual(sensor._calculate_session_cost(coord, bundle_cost_tariff), 1.75)
+        self.assertEqual(sensor._calculate_session_cost(coord, bundle_cost_zero), 0.0)
 
         # 7. Fallback to last session report when live_transaction is empty
         bundle_from_report = {

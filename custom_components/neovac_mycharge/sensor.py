@@ -210,7 +210,7 @@ def _calculate_session_duration(
 def _calculate_session_cost(
     coord: NeoVacDataUpdateCoordinator, b: dict[str, Any]
 ) -> float:
-    """Calculates active session cost in CHF from price field, energy * tariff, or last session report."""
+    """Returns session cost in CHF strictly from given price fields without dynamic calculation."""
     live_tx = b.get("live_transaction", {})
 
     raw_cost = _get_ci(live_tx, "chargePriceInChf", "totalPrice", "costChf")
@@ -222,18 +222,7 @@ def _calculate_session_cost(
         except (ValueError, TypeError):
             _LOGGER.warning("Failed to parse chargePriceInChf '%s' as float", raw_cost)
 
-    # Fallback 1: calculate from accumulated energy * pricePerkWh or defaultTariffPrice
-    energy = _calculate_session_energy(coord, b)
-    rate = _get_ci(live_tx, "pricePerkWh") or _get_ci(
-        b.get("pricing", {}), "defaultTariffPrice", "pricePerkWh"
-    )
-    if energy > 0 and rate is not None:
-        try:
-            return round(energy * float(rate), 2)
-        except (ValueError, TypeError) as err:
-            _LOGGER.warning("Failed to compute session cost with rate '%s': %s", rate, err)
-
-    # Fallback 2: check last session in report
+    # Fallback: check last session in report
     last_session = _get_last_session(b.get("report", {}))
     last_cost = _get_ci(last_session, "chargePriceInChf", "totalPrice")
     if last_cost is not None:
@@ -241,6 +230,12 @@ def _calculate_session_cost(
             val = float(last_cost)
             if val > 0:
                 return round(val, 2)
+        except (ValueError, TypeError):
+            pass
+
+    if raw_cost is not None:
+        try:
+            return float(raw_cost)
         except (ValueError, TypeError):
             pass
 
@@ -369,30 +364,6 @@ SENSOR_DESCRIPTIONS: tuple[NeoVacSensorEntityDescription, ...] = (
                 _get_ci(b.get("live_transaction", {}), "pricePerkWh")
                 or _get_ci(
                     b.get("pricing", {}), "defaultTariffPrice", "pricePerkWh"
-                )
-            ),
-            "calculated": (
-                bool(
-                    float(
-                        _get_ci(
-                            b.get("live_transaction", {}),
-                            "chargePriceInChf",
-                            default=0.0,
-                        )
-                        or 0.0
-                    )
-                    == 0.0
-                )
-                and bool(
-                    float(
-                        _get_ci(
-                            b.get("live_transaction", {}),
-                            "accumulatedEnergyKwH",
-                            default=0.0,
-                        )
-                        or 0.0
-                    )
-                    > 0.0
                 )
             ),
         },
