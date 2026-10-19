@@ -276,23 +276,27 @@ def _calculate_report_30d_cost(
 def _resolve_rfid_display(
     tag: str | None,
     rfids: list[dict[str, Any]],
-    user_id: str | None = None,
+    account_id: str | None = None,
 ) -> str | None:
-    """Maps a raw RFID hex tag to 'Name (TAG)' if registered. Returns None if no badge or if tag is user ID."""
+    """Formats raw RFID tag for display: 'Name (TAG)' if registered, 'App (ACCOUNT_ID)' if account ID, else raw TAG."""
     if not tag:
         return None
     clean = str(tag).strip()
     if not clean:
         return None
-    # Do not show user ID in RFID badge field
-    if user_id and clean.upper() == str(user_id).strip().upper():
-        return None
+
+    # Check registered badges
     for r in rfids:
         r_tag = str(_get_ci(r, "rfidTag", default="")).strip()
         if r_tag.upper() == clean.upper():
             name = _get_ci(r, "rfidName", default="")
-            return f"{name} ({clean.upper()})" if name else clean.upper()
-    return clean.upper()
+            return f"{name} ({clean})" if name else clean
+
+    # If backend returned user account ID because session was started via app (no physical badge used)
+    if account_id and clean.upper() == str(account_id).strip().upper():
+        return f"App ({clean})"
+
+    return clean
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -384,16 +388,7 @@ SENSOR_DESCRIPTIONS: tuple[NeoVacSensorEntityDescription, ...] = (
             "transaction_id": _get_ci(
                 b.get("live_transaction", {}), "transactionId"
             ),
-            "rfid_tag": (
-                None
-                if str(_get_ci(b.get("live_transaction", {}), "rfidTag", default="")).strip().upper()
-                in (
-                    str(coord.data.get("account_id", "")).strip().upper() if coord.data else "",
-                    str(_get_ci(b.get("live_transaction", {}), "accountId", default="")).strip().upper(),
-                    "",
-                )
-                else _get_ci(b.get("live_transaction", {}), "rfidTag")
-            ),
+            "rfid_tag": _get_ci(b.get("live_transaction", {}), "rfidTag"),
         },
     ),
     NeoVacSensorEntityDescription(
@@ -459,7 +454,7 @@ SENSOR_DESCRIPTIONS: tuple[NeoVacSensorEntityDescription, ...] = (
         value_fn=lambda coord, b: _resolve_rfid_display(
             _get_ci(b.get("live_transaction", {}), "rfidTag"),
             coord.data.get("rfids", []) if coord.data else [],
-            user_id=(
+            account_id=(
                 _get_ci(b.get("live_transaction", {}), "accountId")
                 or (coord.data.get("account_id") if coord.data else None)
             ),
@@ -480,7 +475,6 @@ SENSOR_DESCRIPTIONS: tuple[NeoVacSensorEntityDescription, ...] = (
                     b.get("pricing", {}),
                     "defaultTariffPrice",
                     "pricePerkWh",
-                    default=0.0,
                 )
             )
             if (
@@ -561,16 +555,7 @@ SENSOR_DESCRIPTIONS: tuple[NeoVacSensorEntityDescription, ...] = (
             "cost_chf": _get_ci(
                 _get_last_session(b.get("report", {})), "chargePriceInChf"
             ),
-            "rfid_tag": (
-                None
-                if str(_get_ci(_get_last_session(b.get("report", {})), "rfidTag", default="")).strip().upper()
-                in (
-                    str(coord.data.get("account_id", "")).strip().upper() if coord.data else "",
-                    str(_get_ci(_get_last_session(b.get("report", {})), "userId", default="")).strip().upper(),
-                    "",
-                )
-                else _get_ci(_get_last_session(b.get("report", {})), "rfidTag")
-            ),
+            "rfid_tag": _get_ci(_get_last_session(b.get("report", {})), "rfidTag"),
             "user_name": _get_ci(_get_last_session(b.get("report", {})), "userName"),
         },
     ),

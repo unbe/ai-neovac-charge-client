@@ -1188,7 +1188,7 @@ class TestNeoVacIntegration(unittest.IsolatedAsyncioTestCase):
 
 
     def test_rfid_badge_filtering_never_shows_user_id(self) -> None:
-        """Verify that user account IDs never show in RFID badge fields and real API data is shown."""
+        """Verify that user account IDs are formatted as App (ACCOUNT_ID) and real API data is shown."""
         from custom_components.neovac_mycharge import sensor
         from unittest.mock import MagicMock
 
@@ -1197,23 +1197,26 @@ class TestNeoVacIntegration(unittest.IsolatedAsyncioTestCase):
             {"id": 2, "userId": "NUM_USER_99", "rfidTag": "04CCDDEEFF", "rfidName": "Backup Card"},
         ]
 
-        # Account ID / User ID must NEVER be accepted as RFID badge
-        self.assertIsNone(sensor._resolve_rfid_display("TEST_USER_ACC", rfids, user_id="TEST_USER_ACC"))
+        # Account ID returned by backend is formatted for presentation as App (ACCOUNT_ID)
+        self.assertEqual(
+            sensor._resolve_rfid_display("TEST_USER_ACC", rfids, account_id="TEST_USER_ACC"),
+            "App (TEST_USER_ACC)",
+        )
         self.assertIsNone(sensor._resolve_rfid_display(None, rfids))
         self.assertIsNone(sensor._resolve_rfid_display("", rfids))
 
         # Registered badges are resolved with their name
         self.assertEqual(
-            sensor._resolve_rfid_display("04AABBCCDD", rfids, user_id="TEST_USER_ACC"),
+            sensor._resolve_rfid_display("04AABBCCDD", rfids, account_id="TEST_USER_ACC"),
             "Primary Card (04AABBCCDD)",
         )
         self.assertEqual(
-            sensor._resolve_rfid_display("04CCDDEEFF", rfids, user_id="TEST_USER_ACC"),
+            sensor._resolve_rfid_display("04CCDDEEFF", rfids, account_id="TEST_USER_ACC"),
             "Backup Card (04CCDDEEFF)",
         )
         # Unregistered RFID badge returns what API returned
         self.assertEqual(
-            sensor._resolve_rfid_display("11223344", rfids, user_id="TEST_USER_ACC"),
+            sensor._resolve_rfid_display("11223344", rfids, account_id="TEST_USER_ACC"),
             "11223344",
         )
 
@@ -1223,8 +1226,8 @@ class TestNeoVacIntegration(unittest.IsolatedAsyncioTestCase):
             "rfids": rfids,
         }
 
-        # Active session started via app (no RFID badge used)
-        bundle_app_session = {
+        # 1. Active session with no rfidTag returned by backend
+        bundle_no_badge = {
             "info": {"status": "Charging"},
             "live_transaction": {
                 "transactionId": 12345,
@@ -1243,17 +1246,29 @@ class TestNeoVacIntegration(unittest.IsolatedAsyncioTestCase):
                 ]
             },
         }
-
-        # Active RFID badge must be None (do NOT pull from past session!)
         active_rfid_desc = next(d for d in sensor.SENSOR_DESCRIPTIONS if d.key == "active_rfid_badge")
-        self.assertIsNone(active_rfid_desc.value_fn(coord, bundle_app_session))
+        self.assertIsNone(active_rfid_desc.value_fn(coord, bundle_no_badge))
 
-        # Check session_energy attr_fn
+        # 2. Active session where backend populated user account ID into rfidTag
+        bundle_app_session = {
+            "info": {"status": "Charging"},
+            "live_transaction": {
+                "transactionId": 12345,
+                "currentPowerKw": 11.0,
+                "accumulatedEnergyKwH": 3.5,
+                "accountId": "TEST_USER_ACC",
+                "rfidTag": "TEST_USER_ACC",
+            },
+            "report": {},
+        }
+        self.assertEqual(active_rfid_desc.value_fn(coord, bundle_app_session), "App (TEST_USER_ACC)")
+
+        # Check session_energy attr_fn returns raw backend data without dropping
         session_energy_desc = next(d for d in sensor.SENSOR_DESCRIPTIONS if d.key == "session_energy")
         attrs = session_energy_desc.attr_fn(coord, bundle_app_session) if session_energy_desc.attr_fn else {}
-        self.assertIsNone(attrs.get("rfid_tag"))
+        self.assertEqual(attrs.get("rfid_tag"), "TEST_USER_ACC")
 
-        # Last session where no badge was used (API returned user ID in rfidTag)
+        # 3. Last session where backend returned account ID in rfidTag
         bundle_last_app = {
             "live_transaction": {},
             "report": {
@@ -1269,7 +1284,7 @@ class TestNeoVacIntegration(unittest.IsolatedAsyncioTestCase):
         }
         last_energy_desc = next(d for d in sensor.SENSOR_DESCRIPTIONS if d.key == "last_session_energy")
         last_attrs = last_energy_desc.attr_fn(coord, bundle_last_app) if last_energy_desc.attr_fn else {}
-        self.assertIsNone(last_attrs.get("rfid_tag"))
+        self.assertEqual(last_attrs.get("rfid_tag"), "TEST_USER_ACC")
 
 
 if __name__ == "__main__":
