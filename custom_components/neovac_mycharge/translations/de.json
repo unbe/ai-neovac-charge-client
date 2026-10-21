@@ -114,7 +114,6 @@
               "charging_resumed": "Ladevorgang fortgesetzt",
               "cable_plugged_in": "Kabel eingesteckt",
               "cable_unplugged": "Kabel ausgesteckt",
-              "transaction_report": "Live-Telemetrie",
               "price_updated": "Tarif aktualisiert",
               "settings_changed": "Einstellungen geändert",
               "error": "Stationsfehler"

@@ -810,7 +810,8 @@ class TestNeoVacIntegration(unittest.IsolatedAsyncioTestCase):
                 fired_types = [evt_type for evt_type, _ in hass.fired_events]
                 self.assertIn("neovac_mycharge_cable_plugged_in", fired_types)
                 self.assertIn("neovac_mycharge_charging_started", fired_types)
-                self.assertIn("neovac_mycharge_transaction_report", fired_types)
+                # Verify that live telemetry updates do NOT issue transaction_report HA events
+                self.assertNotIn("neovac_mycharge_transaction_report", fired_types)
 
                 # Test ReceiveConnectorTransactionUpdate frame (StatusHub push)
                 await coord.async_handle_signalr_event(

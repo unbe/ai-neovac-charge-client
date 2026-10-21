@@ -91,7 +91,6 @@ State transitions are emitted on both the **`event.<station>_charging_event`** e
 - `charging_resumed`
 - `cable_plugged_in`
 - `cable_unplugged`
-- `transaction_report` (live telemetry update)
 - `price_updated`
 - `settings_changed`
 - `error`

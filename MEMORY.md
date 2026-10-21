@@ -267,7 +267,7 @@ Alongside `neovac_client.py`, the repository provides a HACS-compatible Home Ass
     - `cable_plugged_in`, `cable_unplugged`
     - `charging_started`, `charging_stopped`
     - `charging_paused_ev` (`SuspendedEV`), `charging_paused_evse` (`SuspendedEVSE`), `charging_resumed`
-    - `transaction_report`, `price_updated`, `settings_changed`, `error`
+    - `price_updated`, `settings_changed`, `error`
 - **Platforms**:
   - `sensor.py`: 20 sensors per station (Status, Connector Status, Charging Power, Max Power, Session Energy, Session Cost, Session Duration, Active Transaction ID, Active RFID Badge, Electricity Tariff, 30-Day Energy/Cost/Sessions, Last Session Energy/Cost/End, Monthly Analytics Energy, Registered RFID Badges, Latest Invoice, Guest Invitations).
     - **Strict Data Integrity & Zero Editorial Modification Policy**:

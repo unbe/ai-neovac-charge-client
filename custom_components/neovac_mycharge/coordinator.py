@@ -32,7 +32,6 @@ from .const import (
     EVENT_CHARGING_STOPPED,
     EVENT_PRICE_UPDATED,
     EVENT_SETTINGS_CHANGED,
-    EVENT_TRANSACTION_REPORT,
     HUB_CONNECTOR,
     HUB_EVENTS,
     STATUS_CHARGING,
@@ -530,7 +529,6 @@ class NeoVacDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     error_charging=bool(_get_ci(first_arg, "errorCharging", default=False)),
                     extra=live_tx,
                 )
-                self._emit_event(cp_id, EVENT_TRANSACTION_REPORT, live_tx)
                 self.async_set_updated_data(self.data)
 
             elif target == "StartTransactionNotification":

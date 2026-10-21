@@ -114,7 +114,6 @@
               "charging_resumed": "Charging Resumed",
               "cable_plugged_in": "Cable Plugged In",
               "cable_unplugged": "Cable Unplugged",
-              "transaction_report": "Live Telemetry Update",
               "price_updated": "Tariff Price Updated",
               "settings_changed": "Station Settings Changed",
               "error": "Station Error"
