@@ -10,6 +10,7 @@ import hashlib
 import json
 import logging
 import secrets
+import time
 from typing import Any
 import urllib.parse
 
@@ -52,6 +53,10 @@ class NeoVacError(Exception):
 
 class NeoVacAuthError(NeoVacError):
     """Raised when authentication or token refresh fails (401/invalid_grant)."""
+
+
+class NeoVacConnectionError(NeoVacError):
+    """Raised when a WebSocket or network connection is dropped or fails."""
 
 
 class NeoVacApiError(NeoVacError):
@@ -659,13 +664,14 @@ class NeoVacAsyncClient:
         event_callback: Callable[[str, list[Any]], Awaitable[None] | None],
         charge_point_ids: list[int] | None = None,
         stop_event: asyncio.Event | None = None,
+        on_connected: Callable[[], Awaitable[None] | None] | None = None,
     ) -> None:
         """Connects to a SignalR hub via WebSocket and dispatches incoming events.
 
         Automatically sends the SignalR JSON v1 handshake, subscribes to either
         `SubscribeToTransactionsFromAllSites` (on `events` hub) or
-        `JoinConnectorAsync(cp_id, 1)` (on `connector` hub), and responds to
-        SignalR keepalive pings (`type: 6`).
+        `JoinConnectorAsync(cp_id, 1)` (on `connector` hub), handles keepalive pings,
+        and detects broken connections with WebSocket heartbeat (15s).
         """
         neg_data = await self.async_negotiate_signalr(hub_name)
         if not isinstance(neg_data, dict):
@@ -693,9 +699,24 @@ class NeoVacAsyncClient:
         )
         headers = {"Authorization": f"Bearer {self.access_token}"}
 
-        async with self._session.ws_connect(
-            ws_url, headers=headers, autoping=True, heartbeat=None
-        ) as ws:
+        try:
+            ws = await self._session.ws_connect(
+                ws_url, headers=headers, autoping=True, heartbeat=15.0
+            )
+        except aiohttp.WSServerHandshakeError as err:
+            if err.status in (401, 403):
+                raise NeoVacAuthError(
+                    f"SignalR WebSocket upgrade unauthorized (HTTP {err.status}): {err}"
+                ) from err
+            raise NeoVacConnectionError(
+                f"SignalR WebSocket handshake failed on hub '{hub_name}': {err}"
+            ) from err
+        except (aiohttp.ClientError, asyncio.TimeoutError, OSError) as err:
+            raise NeoVacConnectionError(
+                f"SignalR WebSocket connection failed on hub '{hub_name}': {err}"
+            ) from err
+
+        async with ws:
             # 1. Send SignalR JSON v1 Handshake
             await ws.send_str(
                 json.dumps({"protocol": "json", "version": 1}) + RECORD_SEPARATOR
@@ -720,6 +741,8 @@ class NeoVacAsyncClient:
                                 hub_name,
                                 h_obj["error"],
                             )
+                            if "unauthorized" in str(h_obj["error"]).lower() or "token" in str(h_obj["error"]).lower():
+                                raise NeoVacAuthError(f"SignalR handshake auth error: {h_obj['error']}")
                             raise NeoVacApiError(
                                 status_code=400,
                                 message=f"SignalR handshake error: {h_obj['error']}",
@@ -748,13 +771,46 @@ class NeoVacAsyncClient:
                     }
                     await ws.send_str(json.dumps(sub_payload) + RECORD_SEPARATOR)
 
-            # 3. Read loop
+            # Notify caller that connection and subscriptions succeeded
+            if on_connected:
+                try:
+                    res = on_connected()
+                    if asyncio.iscoroutine(res):
+                        await res
+                except Exception as err:
+                    _LOGGER.warning("Error in on_connected callback on hub '%s': %s", hub_name, err)
+
+            # 3. Read loop with keepalive tracking
             buffer = ""
+            last_activity = time.monotonic()
+            last_ping_sent = time.monotonic()
+            server_timeout = 45.0  # SignalR keepalive timeout (server sends ping every 15s)
+            ping_interval = 15.0   # Send client keepalive ping every 15s of idle
+
             while stop_event is None or not stop_event.is_set():
+                now = time.monotonic()
+                if now - last_activity > server_timeout:
+                    _LOGGER.warning(
+                        "SignalR hub '%s' keepalive timeout (no activity for %.1fs), closing connection",
+                        hub_name,
+                        now - last_activity,
+                    )
+                    break
+
+                if now - last_ping_sent >= ping_interval:
+                    try:
+                        await ws.send_str(json.dumps({"type": 6}) + RECORD_SEPARATOR)
+                        last_ping_sent = now
+                    except Exception as err:
+                        _LOGGER.warning("Failed to send keepalive ping on hub '%s': %s", hub_name, err)
+                        break
+
                 try:
                     msg = await asyncio.wait_for(ws.receive(), timeout=5.0)
                 except asyncio.TimeoutError:
                     continue
+
+                last_activity = time.monotonic()
 
                 if msg.type in (
                     aiohttp.WSMsgType.CLOSED,
@@ -808,9 +864,13 @@ class NeoVacAsyncClient:
                                     exc_info=True,
                                 )
                         elif msg_type == 6:  # Ping
-                            await ws.send_str(
-                                json.dumps({"type": 6}) + RECORD_SEPARATOR
-                            )
+                            try:
+                                await ws.send_str(
+                                    json.dumps({"type": 6}) + RECORD_SEPARATOR
+                                )
+                            except Exception:
+                                pass
+                            last_ping_sent = time.monotonic()
                         elif msg_type == 7:  # Close
                             _LOGGER.warning(
                                 "SignalR server sent Close message (type 7) on hub '%s': %s",

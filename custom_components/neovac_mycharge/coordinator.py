@@ -6,6 +6,8 @@ import asyncio
 from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
 import logging
+import random
+import time
 from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
@@ -17,6 +19,7 @@ from .api import (
     NeoVacApiError,
     NeoVacAsyncClient,
     NeoVacAuthError,
+    NeoVacConnectionError,
     evaluate_state_transitions,
 )
 from .const import (
@@ -285,7 +288,7 @@ class NeoVacDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 }
 
         # Ensure background SignalR WebSocket tasks are running if enabled
-        if self.enable_websocket and charge_points and not self._ws_tasks:
+        if self.enable_websocket and charge_points:
             self.async_start_websocket_listeners(list(charge_points.keys()))
 
         return {
@@ -303,17 +306,21 @@ class NeoVacDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     @callback
     def async_start_websocket_listeners(self, charge_point_ids: list[int]) -> None:
-        """Starts background SignalR WebSocket tasks for StatusHub and ConnectorHub."""
-        if self._ws_tasks:
+        """Starts background SignalR WebSocket tasks for StatusHub and ConnectorHub with auto-healing."""
+        # Prune finished tasks
+        self._ws_tasks = [t for t in self._ws_tasks if not t.done()]
+        running_hubs = {t.get_name().replace("neovac_signalr_", "") for t in self._ws_tasks}
+        if len(running_hubs) >= 2:
             return
         self._stop_event.clear()
         for hub in (HUB_EVENTS, HUB_CONNECTOR):
-            task = self.entry.async_create_background_task(
-                self.hass,
-                self._async_hub_loop(hub, charge_point_ids),
-                name=f"neovac_signalr_{hub}",
-            )
-            self._ws_tasks.append(task)
+            if hub not in running_hubs:
+                task = self.entry.async_create_background_task(
+                    self.hass,
+                    self._async_hub_loop(hub, charge_point_ids),
+                    name=f"neovac_signalr_{hub}",
+                )
+                self._ws_tasks.append(task)
 
     async def async_stop_websocket_listeners(self) -> None:
         """Stops all running SignalR WebSocket tasks."""
@@ -327,24 +334,50 @@ class NeoVacDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     async def _async_hub_loop(
         self, hub_name: str, charge_point_ids: list[int]
     ) -> None:
-        """Persistent reconnect loop for a SignalR hub."""
-        backoff = 5
+        """Persistent reconnect loop for a SignalR hub with limited exponential backoff."""
+        backoff = 2.0
+        max_backoff = 60.0
+        consecutive_failures = 0
+        was_connected_before = False
+
+        @callback
+        def _on_connected() -> None:
+            nonlocal was_connected_before, backoff, consecutive_failures
+            _LOGGER.info("SignalR hub '%s' connected successfully", hub_name)
+            # If reconnecting after an outage, synchronize coordinator data with REST
+            if was_connected_before:
+                self.hass.async_create_task(self.async_request_refresh())
+            was_connected_before = True
+
         while not self._stop_event.is_set():
+            connected_at = time.monotonic()
             try:
                 await self.client.async_stream_signalr_hub(
                     hub_name=hub_name,
                     event_callback=self.async_handle_signalr_event,
                     charge_point_ids=charge_point_ids,
                     stop_event=self._stop_event,
+                    on_connected=_on_connected,
                 )
-                backoff = 5
+                if self._stop_event.is_set():
+                    break
+                consecutive_failures += 1
+                _LOGGER.warning(
+                    "SignalR hub '%s' disconnected, reconnecting in %.1fs (attempt %d, max backoff %.0fs)",
+                    hub_name,
+                    backoff,
+                    consecutive_failures,
+                    max_backoff,
+                )
             except asyncio.CancelledError:
                 break
             except NeoVacAuthError as err:
+                consecutive_failures += 1
                 _LOGGER.warning(
-                    "SignalR auth token expired on hub '%s' (%s), attempting refresh",
+                    "SignalR auth token expired on hub '%s' (%s), attempting refresh (attempt %d)",
                     hub_name,
                     err,
+                    consecutive_failures,
                 )
                 try:
                     await self.client.async_refresh_access_token()
@@ -353,22 +386,32 @@ class NeoVacDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                         "SignalR auth refresh failed on hub '%s': %s",
                         hub_name,
                         refresh_err,
-                        exc_info=True,
                     )
             except Exception as err:
+                consecutive_failures += 1
                 _LOGGER.warning(
-                    "SignalR hub '%s' disconnected (%s), reconnecting in %ss",
+                    "SignalR hub '%s' connection failed (%s), reconnecting in %.1fs (attempt %d, max backoff %.0fs)",
                     hub_name,
                     err,
                     backoff,
+                    consecutive_failures,
+                    max_backoff,
                 )
 
+            # If connection was active and stable for >=30 seconds, reset backoff
+            duration = time.monotonic() - connected_at
+            if duration >= 30.0:
+                backoff = 2.0
+                consecutive_failures = 0
+
             if not self._stop_event.is_set():
+                jitter = random.uniform(0, backoff * 0.2)
+                sleep_time = min(backoff + jitter, max_backoff)
                 try:
-                    await asyncio.sleep(backoff)
+                    await asyncio.sleep(sleep_time)
                 except asyncio.CancelledError:
                     break
-                backoff = min(backoff * 2, 60)
+                backoff = min(backoff * 2.0, max_backoff)
 
     async def async_handle_signalr_event(
         self, target: str, arguments: list[Any]

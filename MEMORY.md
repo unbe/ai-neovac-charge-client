@@ -294,8 +294,20 @@ Alongside `neovac_client.py`, the repository provides a HACS-compatible Home Ass
 ### Real-Time Transport & Polling Architecture
 - **Transport**:
   - Uses ASP.NET Core SignalR JSON v1 over permanent **WebSocket** (`wss://api.mycharge.ch/mobile/hubs/events` and `wss://api.mycharge.ch/mobile/hubs/connector`).
-  - SignalR heartbeat keepalive pings (`type: 6`) are handled every 30 seconds.
-  - Background tasks run continuously with automatic exponential backoff reconnect (5s to 60s) on disconnects or token expiry.
+  - Active detection of dead TCP connections / internet drops:
+    - Transport-level WebSocket heartbeat (`heartbeat=15.0`, `autoping=True`) detects broken TCP sockets within seconds.
+    - Application-level SignalR keepalive tracking: sends client pings (`type: 6`) every 15s of idle, and terminates the connection if no message is received within 45s (SignalR keepalive timeout).
+- **Reconnection Strategy with Limited Exponential Backoff**:
+  - Reconnect loop runs continuously in `_async_hub_loop`:
+    - Initial delay: 2.0 seconds.
+    - Backoff progression: doubles each failed attempt (2s -> 4s -> 8s -> 16s -> 32s -> 60s max).
+    - Limited cap: maximum backoff is capped at 60 seconds (`MAX_BACKOFF = 60.0s`).
+    - Random jitter: 0% to 20% random jitter added to sleep times to prevent thundering-herd reconnect spikes across hubs.
+    - Stable connection reset: backoff resets to 2.0s and failure counter clears only after the connection has run stably for >= 30 seconds.
+    - Automatic token refresh on 401: catches `WSServerHandshakeError` (status 401/403) and auth errors, automatically refreshing access tokens before retrying.
+    - State resynchronization: automatically triggers `async_request_refresh()` upon successful reconnection after an outage so Home Assistant entities instantly catch up with missed charging state.
+    - Auto-healing task manager: `async_start_websocket_listeners` prunes dead/finished tasks and restarts any missing hub listeners.
+  - CLI parity (`neovac_client.py`): `stream_telemetry` reconnects with limited exponential backoff (capped at 30s) for the duration of the stream, and falls back to long-polling if WebSocket fails under `transport="auto"`.
 - **REST Polling**:
   - `DataUpdateCoordinator` runs on a 900-second interval (`DEFAULT_SCAN_INTERVAL = 900`, 15 minutes) to refresh account-wide metadata, 30-day reports, monthly analytics, RFIDs, and invoices.
   - Live charging status, power, energy, and hardware settings update instantly upon arrival of SignalR messages.

@@ -700,13 +700,19 @@ class NeoVacClient:
             # Step 4: Stream incoming telemetry
             end_time = time.time() + duration_seconds
             buffer = ""
+            last_activity = time.time()
+            server_timeout = 45.0
             while time.time() < end_time:
-                remaining = end_time - time.time()
+                now = time.time()
+                if now - last_activity > server_timeout:
+                    break
+                remaining = end_time - now
                 if remaining <= 0:
                     break
                 try:
                     recv_timeout = min(remaining, 5.0)
                     data = ws.recv(timeout=recv_timeout)
+                    last_activity = time.time()
                     if isinstance(data, bytes):
                         data = data.decode("utf-8", errors="ignore")
                     buffer += data
@@ -732,6 +738,7 @@ class NeoVacClient:
                                     ws.send(json.dumps({"type": 6}) + "\x1e")
                                 except Exception:
                                     pass
+                                last_activity = time.time()
                             elif msg_type == 7:  # Close message
                                 return
                         except json.JSONDecodeError:
@@ -845,25 +852,47 @@ class NeoVacClient:
         if selected_transport == "auto":
             selected_transport = "websocket" if HAS_WEBSOCKETS else "long-polling"
 
-        neg_data = self._negotiate_signalr(hub_name)
-        connection_token = neg_data.get("connectionToken") or neg_data.get("connectionId")
-        if not connection_token:
-            raise RuntimeError(f"SignalR negotiation failed: {neg_data}")
+        end_time = time.time() + duration_seconds
+        backoff = 2.0
+        max_backoff = 30.0
 
-        if selected_transport == "websocket":
-            yield from self._stream_telemetry_websocket(
-                hub_name=hub_name,
-                connection_token=connection_token,
-                duration_seconds=duration_seconds,
-                callback=callback,
-            )
-        else:
-            yield from self._stream_telemetry_long_polling(
-                hub_name=hub_name,
-                connection_token=connection_token,
-                duration_seconds=duration_seconds,
-                callback=callback,
-            )
+        while time.time() < end_time:
+            remaining = int(end_time - time.time())
+            if remaining <= 0:
+                break
+
+            try:
+                neg_data = self._negotiate_signalr(hub_name)
+                connection_token = neg_data.get("connectionToken") or neg_data.get("connectionId")
+                if not connection_token:
+                    raise RuntimeError(f"SignalR negotiation failed: {neg_data}")
+
+                connected_at = time.time()
+                if selected_transport == "websocket":
+                    yield from self._stream_telemetry_websocket(
+                        hub_name=hub_name,
+                        connection_token=connection_token,
+                        duration_seconds=remaining,
+                        callback=callback,
+                    )
+                else:
+                    yield from self._stream_telemetry_long_polling(
+                        hub_name=hub_name,
+                        connection_token=connection_token,
+                        duration_seconds=remaining,
+                        callback=callback,
+                    )
+
+                if time.time() - connected_at >= 30.0:
+                    backoff = 2.0
+            except Exception:
+                if transport == "auto" and selected_transport == "websocket":
+                    selected_transport = "long-polling"
+
+                sleep_time = min(backoff, max(0.0, end_time - time.time()))
+                if sleep_time > 0:
+                    time.sleep(sleep_time)
+                backoff = min(backoff * 2.0, max_backoff)
 
     # -------------------------------------------------------------------------
     # Pricing & Invoices

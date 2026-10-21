@@ -1307,6 +1307,165 @@ class TestNeoVacIntegration(unittest.IsolatedAsyncioTestCase):
         last_attrs = last_energy_desc.attr_fn(coord, bundle_last_app) if last_energy_desc.attr_fn else {}
         self.assertEqual(last_attrs.get("rfid_tag"), "TEST_USER_ACC")
 
+    async def test_websocket_reconnection_and_exponential_backoff(self) -> None:
+        """Verify limited exponential backoff reconnection strategy, token refresh on 401, and auto-refresh."""
+        _install_ha_stubs()
+        from unittest.mock import AsyncMock, MagicMock, patch
+        from custom_components.neovac_mycharge import coordinator, const
+        from custom_components.neovac_mycharge.api import (
+            NeoVacAuthError,
+            NeoVacConnectionError,
+        )
+
+        hass = sys.modules["homeassistant.core"].HomeAssistant()
+        entry = sys.modules["homeassistant.config_entries"].ConfigEntry(
+            data={const.CONF_ENABLE_WEBSOCKET: True}
+        )
+        client = MagicMock()
+        coord = coordinator.NeoVacDataUpdateCoordinator(hass, entry, client)
+        coord.data = {"charge_points": {1001: {"info": {}, "live_transaction": {}}}}
+
+        # 1. Test pruning and restarting dead websocket listener tasks
+        dead_task = MagicMock()
+        dead_task.done.return_value = True
+        dead_task.get_name.return_value = "neovac_signalr_events"
+        coord._ws_tasks = [dead_task]
+
+        created_tasks: list[str] = []
+
+        def mock_create_bg_task(hass_obj: Any, coro: Any, name: str = "") -> Any:
+            created_tasks.append(name)
+            # Create a mock task that is active
+            t = MagicMock()
+            t.done.return_value = False
+            t.get_name.return_value = name
+            # Close the coroutine to avoid unawaited warning
+            coro.close()
+            return t
+
+        entry.async_create_background_task = mock_create_bg_task
+        coord.async_start_websocket_listeners([1001])
+        # Dead task was pruned and both hub tasks were started
+        self.assertIn("neovac_signalr_events", created_tasks)
+        self.assertIn("neovac_signalr_connector", created_tasks)
+        self.assertEqual(len(coord._ws_tasks), 2)
+
+        # 2. Test _async_hub_loop exponential backoff progression and reconnection
+        sleep_calls: list[float] = []
+        call_count = 0
+
+        async def mock_sleep(seconds: float) -> None:
+            sleep_calls.append(seconds)
+
+        refresh_called = False
+
+        async def mock_refresh() -> None:
+            nonlocal refresh_called
+            refresh_called = True
+
+        coord.async_request_refresh = mock_refresh
+        client.async_refresh_access_token = AsyncMock()
+
+        async def mock_stream_signalr_hub(
+            hub_name: str,
+            event_callback: Any,
+            charge_point_ids: Any = None,
+            stop_event: Any = None,
+            on_connected: Any = None,
+        ) -> None:
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                # 1st attempt: Connection fails with network drop
+                raise NeoVacConnectionError("Internet down")
+            elif call_count == 2:
+                # 2nd attempt: Fails with expired token (401)
+                raise NeoVacAuthError("Token expired")
+            elif call_count == 3:
+                # 3rd attempt: Connects successfully, then drops
+                if on_connected:
+                    res = on_connected()
+                    if asyncio.iscoroutine(res):
+                        await res
+                raise NeoVacConnectionError("Connection severed")
+            elif call_count == 4:
+                # 4th attempt: Reconnects successfully after outage
+                if on_connected:
+                    res = on_connected()
+                    if asyncio.iscoroutine(res):
+                        await res
+                # Stop the loop after verifying successful reconnection
+                coord._stop_event.set()
+
+        client.async_stream_signalr_hub = mock_stream_signalr_hub
+
+        with patch("asyncio.sleep", side_effect=mock_sleep):
+            await coord._async_hub_loop(const.HUB_EVENTS, [1001])
+
+        # Yield event loop so background tasks scheduled via async_create_task execute
+        await asyncio.sleep(0)
+
+        # Verify call progression and exponential backoff
+        self.assertEqual(call_count, 4)
+        # Verify auth token refresh was called on 401
+        client.async_refresh_access_token.assert_awaited_once()
+        # Verify coordinator refresh was scheduled on reconnect (was_connected_before=True)
+        self.assertTrue(refresh_called)
+
+        # Check sleep backoffs:
+        # Attempt 1 failed: backoff started at 2.0s (+ up to 20% jitter) -> ~2.0 - 2.4s
+        self.assertGreaterEqual(sleep_calls[0], 2.0)
+        self.assertLessEqual(sleep_calls[0], 2.5)
+
+        # Attempt 2 failed: backoff doubled to 4.0s (+ up to 20% jitter) -> ~4.0 - 4.8s
+        self.assertGreaterEqual(sleep_calls[1], 4.0)
+        self.assertLessEqual(sleep_calls[1], 5.0)
+
+        # Attempt 3 failed (dropped quickly <30s): backoff doubled to 8.0s (+ up to 20% jitter) -> ~8.0 - 9.6s
+        self.assertGreaterEqual(sleep_calls[2], 8.0)
+        self.assertLessEqual(sleep_calls[2], 10.0)
+
+        # 3. Test CLI / standalone client stream_telemetry reconnection with backoff
+        import neovac_client
+        cli_client = neovac_client.NeoVacClient()
+        cli_client.config = {"access_token": "token", "charge_point_id": 1001}
+        cli_sleep_calls: list[float] = []
+
+        cli_attempts = 0
+
+        def mock_negotiate(hub: str) -> dict[str, Any]:
+            nonlocal cli_attempts
+            cli_attempts += 1
+            if cli_attempts == 1:
+                return {"connectionToken": "tok_1"}
+            elif cli_attempts == 2:
+                # 2nd attempt after disconnect
+                return {"connectionToken": "tok_2"}
+            return {"connectionToken": "tok_3"}
+
+        def mock_ws_stream(*args: Any, **kwargs: Any) -> Any:
+            if cli_attempts == 1:
+                yield {"target": "OnTransactionReport", "arguments": [{"currentPowerKw": 11.0}]}
+                raise ConnectionResetError("Socket disconnected")
+            yield {"target": "OnTransactionReport", "arguments": [{"currentPowerKw": 0.0}]}
+
+        cli_client._negotiate_signalr = mock_negotiate  # type: ignore[assignment]
+        cli_client._stream_telemetry_websocket = mock_ws_stream  # type: ignore[assignment]
+
+        with patch("time.sleep", side_effect=lambda s: cli_sleep_calls.append(s)), \
+             patch("neovac_client.HAS_WEBSOCKETS", True):
+            events = []
+            for ev in cli_client.stream_telemetry(hub_name="events", duration_seconds=10, transport="websocket"):
+                events.append(ev)
+                if len(events) >= 2:
+                    break
+
+        self.assertEqual(len(events), 2)
+        self.assertEqual(events[0]["arguments"][0]["currentPowerKw"], 11.0)
+        self.assertEqual(events[1]["arguments"][0]["currentPowerKw"], 0.0)
+        self.assertGreaterEqual(len(cli_sleep_calls), 1)
+        self.assertEqual(cli_sleep_calls[0], 2.0)
+
 
 if __name__ == "__main__":
     unittest.main()
