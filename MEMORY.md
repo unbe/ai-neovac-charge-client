@@ -295,8 +295,8 @@ Alongside `neovac_client.py`, the repository provides a HACS-compatible Home Ass
 - **Transport**:
   - Uses ASP.NET Core SignalR JSON v1 over permanent **WebSocket** (`wss://api.mycharge.ch/mobile/hubs/events` and `wss://api.mycharge.ch/mobile/hubs/connector`).
   - Active detection of dead TCP connections / internet drops:
-    - Transport-level WebSocket heartbeat (`heartbeat=15.0`, `autoping=True`) detects broken TCP sockets within seconds.
-    - Application-level SignalR keepalive tracking: sends client pings (`type: 6`) every 15s of idle, and terminates the connection if no message is received within 45s (SignalR keepalive timeout).
+    - Transport-level WebSocket heartbeat (`heartbeat=55.0`, `autoping=True`) detects broken TCP sockets within seconds.
+    - Application-level SignalR keepalive tracking: sends client pings (`type: 6`) every 55s of idle, and terminates the connection if no message is received within 120s (SignalR keepalive timeout).
 - **Reconnection Strategy with Limited Exponential Backoff**:
   - Reconnect loop runs continuously in `_async_hub_loop`:
     - Initial delay: 2.0 seconds.

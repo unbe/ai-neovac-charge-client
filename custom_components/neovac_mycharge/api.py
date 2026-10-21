@@ -671,7 +671,7 @@ class NeoVacAsyncClient:
         Automatically sends the SignalR JSON v1 handshake, subscribes to either
         `SubscribeToTransactionsFromAllSites` (on `events` hub) or
         `JoinConnectorAsync(cp_id, 1)` (on `connector` hub), handles keepalive pings,
-        and detects broken connections with WebSocket heartbeat (15s).
+        and detects broken connections with WebSocket heartbeat (55s).
         """
         neg_data = await self.async_negotiate_signalr(hub_name)
         if not isinstance(neg_data, dict):
@@ -701,7 +701,7 @@ class NeoVacAsyncClient:
 
         try:
             ws = await self._session.ws_connect(
-                ws_url, headers=headers, autoping=True, heartbeat=15.0
+                ws_url, headers=headers, autoping=True, heartbeat=55.0
             )
         except aiohttp.WSServerHandshakeError as err:
             if err.status in (401, 403):
@@ -784,8 +784,8 @@ class NeoVacAsyncClient:
             buffer = ""
             last_activity = time.monotonic()
             last_ping_sent = time.monotonic()
-            server_timeout = 45.0  # SignalR keepalive timeout (server sends ping every 15s)
-            ping_interval = 15.0   # Send client keepalive ping every 15s of idle
+            server_timeout = 120.0  # SignalR keepalive timeout
+            ping_interval = 55.0    # Send client keepalive ping every 55s of idle
 
             while stop_event is None or not stop_event.is_set():
                 now = time.monotonic()

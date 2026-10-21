@@ -701,7 +701,7 @@ class NeoVacClient:
             end_time = time.time() + duration_seconds
             buffer = ""
             last_activity = time.time()
-            server_timeout = 45.0
+            server_timeout = 120.0
             while time.time() < end_time:
                 now = time.time()
                 if now - last_activity > server_timeout:
