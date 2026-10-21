@@ -179,9 +179,9 @@ class NeoVacDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             raise UpdateFailed(f"Error communicating with NeoVac API: {err}") from err
 
         # Fetch account-level resources (RFIDs, invoices, notification settings)
-        rfids: list[dict[str, Any]] = []
-        invoices: list[dict[str, Any]] = []
-        notification_settings: dict[str, Any] = {}
+        rfids: list[dict[str, Any]] | None = None
+        invoices: list[dict[str, Any]] | None = None
+        notification_settings: dict[str, Any] | None = None
 
         results = await asyncio.gather(
             self.client.async_list_rfids(),
@@ -191,16 +191,19 @@ class NeoVacDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         )
         if isinstance(results[0], Exception):
             _LOGGER.warning("Error fetching RFIDs: %s", results[0])
+            rfids = None
         elif isinstance(results[0], list):
             rfids = results[0]
 
         if isinstance(results[1], Exception):
             _LOGGER.warning("Error fetching invoices: %s", results[1])
+            invoices = None
         elif isinstance(results[1], list):
             invoices = results[1]
 
         if isinstance(results[2], Exception):
             _LOGGER.warning("Error fetching notification settings: %s", results[2])
+            notification_settings = None
         elif isinstance(results[2], dict):
             notification_settings = results[2]
 
@@ -229,35 +232,35 @@ class NeoVacDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 )
                 if isinstance(cp_tasks[0], Exception):
                     _LOGGER.warning("Error fetching charge report for station %s: %s", cp_id, cp_tasks[0])
-                    report = {}
+                    report = None
                 elif isinstance(cp_tasks[0], dict):
                     report = cp_tasks[0]
                 else:
-                    report = {}
+                    report = None
 
                 if isinstance(cp_tasks[1], Exception):
                     _LOGGER.warning("Error fetching analytics for station %s: %s", cp_id, cp_tasks[1])
-                    analytics = {}
+                    analytics = None
                 elif isinstance(cp_tasks[1], dict):
                     analytics = cp_tasks[1]
                 else:
-                    analytics = {}
+                    analytics = None
 
                 if isinstance(cp_tasks[2], Exception):
                     _LOGGER.warning("Error fetching pricing for station %s: %s", cp_id, cp_tasks[2])
-                    pricing = {}
+                    pricing = None
                 elif isinstance(cp_tasks[2], dict):
                     pricing = cp_tasks[2]
                 else:
-                    pricing = {}
+                    pricing = None
 
                 if isinstance(cp_tasks[3], Exception):
                     _LOGGER.warning("Error fetching guest invitations for station %s: %s", cp_id, cp_tasks[3])
-                    invitations = []
+                    invitations = None
                 elif isinstance(cp_tasks[3], list):
                     invitations = cp_tasks[3]
                 else:
-                    invitations = []
+                    invitations = None
 
                 status = _get_ci(cp, "status") or _get_ci(cp, "connectorZeroStatus")
                 self._check_and_emit_status_transitions(cp_id, status)
@@ -381,6 +384,15 @@ class NeoVacDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 )
                 try:
                     await self.client.async_refresh_access_token()
+                except NeoVacAuthError as refresh_err:
+                    _LOGGER.error(
+                        "SignalR auth refresh failed permanently on hub '%s': %s. Stopping listener and triggering reauth.",
+                        hub_name,
+                        refresh_err,
+                    )
+                    if hasattr(self.entry, "async_start_reauth"):
+                        self.entry.async_start_reauth(self.hass)
+                    break
                 except Exception as refresh_err:
                     _LOGGER.error(
                         "SignalR auth refresh failed on hub '%s': %s",

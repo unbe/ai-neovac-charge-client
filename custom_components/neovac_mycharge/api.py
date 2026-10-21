@@ -46,6 +46,8 @@ from .const import (
 
 _LOGGER = logging.getLogger(__name__)
 
+DEFAULT_REQUEST_TIMEOUT = aiohttp.ClientTimeout(total=30.0)
+
 
 class NeoVacError(Exception):
     """Base exception for NeoVac errors."""
@@ -217,15 +219,19 @@ class NeoVacAsyncClient:
             "code_verifier": code_verifier,
             "code": code,
         }
-        async with self._session.post(
-            url,
-            data=payload,
-            headers={"Accept": "application/json"},
-        ) as resp:
-            raw = await resp.text()
-            if resp.status >= 400:
-                raise NeoVacAuthError(f"Code exchange failed (HTTP {resp.status}): {raw}")
-            data = json.loads(raw)
+        try:
+            async with self._session.post(
+                url,
+                data=payload,
+                headers={"Accept": "application/json"},
+                timeout=DEFAULT_REQUEST_TIMEOUT,
+            ) as resp:
+                raw = await resp.text()
+                if resp.status >= 400:
+                    raise NeoVacAuthError(f"Code exchange failed (HTTP {resp.status}): {raw}")
+                data = json.loads(raw)
+        except (aiohttp.ClientError, asyncio.TimeoutError, OSError) as err:
+            raise NeoVacConnectionError(f"Network error during code exchange: {err}") from err
 
         if "access_token" not in data:
             raise NeoVacAuthError(f"Missing access_token in response: {data}")
@@ -249,23 +255,29 @@ class NeoVacAsyncClient:
                 "grant_type": "refresh_token",
                 "refresh_token": self.refresh_token,
             }
-            async with self._session.post(
-                url,
-                data=payload,
-                headers={"Accept": "application/json"},
-            ) as resp:
-                raw = await resp.text()
-                if resp.status in (400, 401):
-                    raise NeoVacAuthError(f"Refresh token invalid or expired: {raw}")
-                if resp.status >= 400:
-                    raise NeoVacApiError(
-                        status_code=resp.status,
-                        message=f"Token refresh failed: {raw}",
-                        endpoint="/connect/token",
-                        method="POST",
-                        raw_body=raw,
-                    )
-                data = json.loads(raw)
+            try:
+                async with self._session.post(
+                    url,
+                    data=payload,
+                    headers={"Accept": "application/json"},
+                    timeout=DEFAULT_REQUEST_TIMEOUT,
+                ) as resp:
+                    raw = await resp.text()
+                    if resp.status in (400, 401):
+                        raise NeoVacAuthError(f"Refresh token invalid or expired: {raw}")
+                    if resp.status >= 400:
+                        raise NeoVacApiError(
+                            status_code=resp.status,
+                            message=f"Token refresh failed: {raw}",
+                            endpoint="/connect/token",
+                            method="POST",
+                            raw_body=raw,
+                        )
+                    data = json.loads(raw)
+            except (aiohttp.ClientError, asyncio.TimeoutError, OSError) as err:
+                raise NeoVacConnectionError(
+                    f"Network error refreshing access token: {err}"
+                ) from err
 
             if "access_token" not in data:
                 raise NeoVacAuthError(f"Token refresh did not return access_token: {data}")
@@ -305,76 +317,85 @@ class NeoVacAsyncClient:
             "Authorization": f"Bearer {self.access_token}",
             "Accept": "application/json",
         }
-        async with self._session.request(
-            method, url, json=data, headers=headers
-        ) as resp:
-            if resp.status == 401 and retry_on_401 and self.refresh_token:
-                await self.async_refresh_access_token()
-                return await self._request(
-                    endpoint,
-                    method=method,
-                    data=data,
-                    retry_on_401=False,
-                )
+        try:
+            async with self._session.request(
+                method,
+                url,
+                json=data,
+                headers=headers,
+                timeout=DEFAULT_REQUEST_TIMEOUT,
+            ) as resp:
+                if resp.status == 401 and retry_on_401 and self.refresh_token:
+                    await self.async_refresh_access_token()
+                    return await self._request(
+                        endpoint,
+                        method=method,
+                        data=data,
+                        retry_on_401=False,
+                    )
 
-            raw_text = await resp.text()
-            if resp.status == 401:
-                raise NeoVacAuthError(f"Unauthorized request to {endpoint}")
+                raw_text = await resp.text()
+                if resp.status == 401:
+                    raise NeoVacAuthError(f"Unauthorized request to {endpoint}")
 
-            if resp.status >= 400:
-                parsed_data: dict[str, Any] = {}
-                error_msg = f"HTTP {resp.status}"
-                if raw_text.strip():
-                    try:
-                        parsed = json.loads(raw_text)
-                        if isinstance(parsed, dict):
-                            parsed_data = parsed
-                            error_msg = (
-                                parsed.get("message")
-                                or parsed.get("error_description")
-                                or parsed.get("error")
-                                or str(parsed)
+                if resp.status >= 400:
+                    parsed_data: dict[str, Any] = {}
+                    error_msg = f"HTTP {resp.status}"
+                    if raw_text.strip():
+                        try:
+                            parsed = json.loads(raw_text)
+                            if isinstance(parsed, dict):
+                                parsed_data = parsed
+                                error_msg = (
+                                    parsed.get("message")
+                                    or parsed.get("error_description")
+                                    or parsed.get("error")
+                                    or str(parsed)
+                                )
+                        except Exception as err:
+                            _LOGGER.warning(
+                                "Failed to parse error response JSON for %s %s: %s (body preview: %s)",
+                                method,
+                                endpoint,
+                                err,
+                                raw_text[:200],
                             )
-                    except Exception as err:
-                        _LOGGER.warning(
-                            "Failed to parse error response JSON for %s %s: %s (body preview: %s)",
-                            method,
-                            endpoint,
-                            err,
-                            raw_text[:200],
-                        )
-                        error_msg = raw_text.strip() or f"HTTP {resp.status}"
+                            error_msg = raw_text.strip() or f"HTTP {resp.status}"
 
-                _LOGGER.error(
-                    "NeoVac API request failed [%s %s]: %s (status %s)",
-                    method,
-                    endpoint,
-                    error_msg,
-                    resp.status,
-                )
+                    _LOGGER.error(
+                        "NeoVac API request failed [%s %s]: %s (status %s)",
+                        method,
+                        endpoint,
+                        error_msg,
+                        resp.status,
+                    )
 
-                raise NeoVacApiError(
-                    status_code=resp.status,
-                    message=error_msg,
-                    endpoint=endpoint,
-                    method=method,
-                    raw_body=raw_text,
-                    data=parsed_data,
-                )
+                    raise NeoVacApiError(
+                        status_code=resp.status,
+                        message=error_msg,
+                        endpoint=endpoint,
+                        method=method,
+                        raw_body=raw_text,
+                        data=parsed_data,
+                    )
 
-            if not raw_text:
-                return None
-            try:
-                return json.loads(raw_text)
-            except json.JSONDecodeError as err:
-                _LOGGER.warning(
-                    "Non-JSON response from [%s %s]: %s (body preview: %s)",
-                    method,
-                    endpoint,
-                    err,
-                    raw_text[:200],
-                )
-                return raw_text
+                if not raw_text:
+                    return None
+                try:
+                    return json.loads(raw_text)
+                except json.JSONDecodeError as err:
+                    _LOGGER.warning(
+                        "Non-JSON response from [%s %s]: %s (body preview: %s)",
+                        method,
+                        endpoint,
+                        err,
+                        raw_text[:200],
+                    )
+                    return raw_text
+        except (aiohttp.ClientError, asyncio.TimeoutError, OSError) as err:
+            raise NeoVacConnectionError(
+                f"Network error connecting to {endpoint}: {err}"
+            ) from err
 
     # -------------------------------------------------------------------------
     # User, Sites & Charge Points

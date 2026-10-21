@@ -211,7 +211,7 @@ def _calculate_report_30d_energy(
     coord: NeoVacDataUpdateCoordinator, b: dict[str, Any]
 ) -> float:
     """Calculates 30-day energy from aggregate report field or sums session quantities."""
-    rep = b.get("report", {})
+    rep = b.get("report") or {}
     total = _get_ci(
         rep,
         "totalChargingQuantityInkWh",
@@ -244,7 +244,7 @@ def _calculate_report_30d_cost(
     coord: NeoVacDataUpdateCoordinator, b: dict[str, Any]
 ) -> float:
     """Calculates 30-day cost from aggregate report field or sums session costs."""
-    rep = b.get("report", {})
+    rep = b.get("report") or {}
     total = _get_ci(
         rep,
         "totalPrice",
@@ -306,6 +306,9 @@ class NeoVacSensorEntityDescription(SensorEntityDescription):
     value_fn: Callable[[NeoVacDataUpdateCoordinator, dict[str, Any]], Any]
     attr_fn: Callable[
         [NeoVacDataUpdateCoordinator, dict[str, Any]], dict[str, Any]
+    ] | None = None
+    available_fn: Callable[
+        [NeoVacDataUpdateCoordinator, dict[str, Any]], bool
     ] | None = None
 
 
@@ -448,7 +451,7 @@ SENSOR_DESCRIPTIONS: tuple[NeoVacSensorEntityDescription, ...] = (
         icon="mdi:card-account-details-outline",
         value_fn=lambda coord, b: _resolve_rfid_display(
             _get_ci(b.get("live_transaction", {}), "rfidTag"),
-            coord.data.get("rfids", []) if coord.data else [],
+            (coord.data.get("rfids") or []) if coord.data else [],
             account_id=(
                 _get_ci(b.get("live_transaction", {}), "accountId")
                 or (coord.data.get("account_id") if coord.data else None)
@@ -463,28 +466,32 @@ SENSOR_DESCRIPTIONS: tuple[NeoVacSensorEntityDescription, ...] = (
         state_class=SensorStateClass.MEASUREMENT,
         suggested_display_precision=3,
         icon="mdi:currency-chf",
+        available_fn=lambda coord, b: (
+            b.get("pricing") is not None
+            or _get_ci(b.get("live_transaction", {}), "pricePerkWh") is not None
+        ),
         value_fn=lambda coord, b: (
             float(
                 _get_ci(b.get("live_transaction", {}), "pricePerkWh")
                 or _get_ci(
-                    b.get("pricing", {}),
+                    b.get("pricing") or {},
                     "defaultTariffPrice",
                     "pricePerkWh",
                 )
             )
             if (
                 _get_ci(b.get("live_transaction", {}), "pricePerkWh") is not None
-                or _get_ci(b.get("pricing", {}), "defaultTariffPrice", "pricePerkWh")
+                or _get_ci(b.get("pricing") or {}, "defaultTariffPrice", "pricePerkWh")
                 is not None
             )
             else None
         ),
         attr_fn=lambda coord, b: {
             "default_tariff_name": _get_ci(
-                b.get("pricing", {}), "defaultTariffName"
+                b.get("pricing") or {}, "defaultTariffName"
             ),
             "tariff_schedule": _get_ci(
-                b.get("pricing", {}), "tariffTimeDetails", default=[]
+                b.get("pricing") or {}, "tariffTimeDetails", default=[]
             ),
         },
     ),
@@ -497,9 +504,10 @@ SENSOR_DESCRIPTIONS: tuple[NeoVacSensorEntityDescription, ...] = (
         state_class=SensorStateClass.TOTAL,
         suggested_display_precision=2,
         icon="mdi:lightning-bolt-circle",
+        available_fn=lambda coord, b: b.get("report") is not None,
         value_fn=_calculate_report_30d_energy,
         attr_fn=lambda coord, b: {
-            "sessions_count": len(_get_report_sessions(b.get("report", {}))),
+            "sessions_count": len(_get_report_sessions(b.get("report") or {})),
         },
     ),
     NeoVacSensorEntityDescription(
@@ -511,6 +519,7 @@ SENSOR_DESCRIPTIONS: tuple[NeoVacSensorEntityDescription, ...] = (
         state_class=SensorStateClass.TOTAL,
         suggested_display_precision=2,
         icon="mdi:cash-check",
+        available_fn=lambda coord, b: b.get("report") is not None,
         value_fn=_calculate_report_30d_cost,
     ),
     NeoVacSensorEntityDescription(
@@ -520,7 +529,8 @@ SENSOR_DESCRIPTIONS: tuple[NeoVacSensorEntityDescription, ...] = (
         native_unit_of_measurement="sessions",
         state_class=SensorStateClass.MEASUREMENT,
         icon="mdi:counter",
-        value_fn=lambda coord, b: len(_get_report_sessions(b.get("report", {}))),
+        available_fn=lambda coord, b: b.get("report") is not None,
+        value_fn=lambda coord, b: len(_get_report_sessions(b.get("report") or {})),
     ),
     NeoVacSensorEntityDescription(
         key="last_session_energy",
@@ -530,17 +540,18 @@ SENSOR_DESCRIPTIONS: tuple[NeoVacSensorEntityDescription, ...] = (
         native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
         suggested_display_precision=2,
         icon="mdi:history",
+        available_fn=lambda coord, b: b.get("report") is not None,
         value_fn=lambda coord, b: (
             float(
                 _get_ci(
-                    _get_last_session(b.get("report", {})),
+                    _get_last_session(b.get("report") or {}),
                     "chargeQuantityInkWh",
                 )
             )
             if (
-                _get_last_session(b.get("report", {}))
+                _get_last_session(b.get("report") or {})
                 and _get_ci(
-                    _get_last_session(b.get("report", {})),
+                    _get_last_session(b.get("report") or {}),
                     "chargeQuantityInkWh",
                 ) is not None
             )
@@ -548,15 +559,15 @@ SENSOR_DESCRIPTIONS: tuple[NeoVacSensorEntityDescription, ...] = (
         ),
         attr_fn=lambda coord, b: {
             "end_time": _get_ci(
-                _get_last_session(b.get("report", {})),
+                _get_last_session(b.get("report") or {}),
                 "chargeProcessEndTime",
                 "endTime",
             ),
             "cost_chf": _get_ci(
-                _get_last_session(b.get("report", {})), "chargePriceInChf"
+                _get_last_session(b.get("report") or {}), "chargePriceInChf"
             ),
-            "rfid_tag": _get_ci(_get_last_session(b.get("report", {})), "rfidTag"),
-            "user_name": _get_ci(_get_last_session(b.get("report", {})), "userName"),
+            "rfid_tag": _get_ci(_get_last_session(b.get("report") or {}), "rfidTag"),
+            "user_name": _get_ci(_get_last_session(b.get("report") or {}), "userName"),
         },
     ),
     NeoVacSensorEntityDescription(
@@ -567,18 +578,19 @@ SENSOR_DESCRIPTIONS: tuple[NeoVacSensorEntityDescription, ...] = (
         native_unit_of_measurement="CHF",
         suggested_display_precision=2,
         icon="mdi:receipt-text-clock",
+        available_fn=lambda coord, b: b.get("report") is not None,
         value_fn=lambda coord, b: (
             float(
                 _get_ci(
-                    _get_last_session(b.get("report", {})),
+                    _get_last_session(b.get("report") or {}),
                     "chargePriceInChf",
                     "totalPrice",
                 )
             )
             if (
-                _get_last_session(b.get("report", {}))
+                _get_last_session(b.get("report") or {})
                 and _get_ci(
-                    _get_last_session(b.get("report", {})),
+                    _get_last_session(b.get("report") or {}),
                     "chargePriceInChf",
                     "totalPrice",
                 ) is not None
@@ -592,18 +604,19 @@ SENSOR_DESCRIPTIONS: tuple[NeoVacSensorEntityDescription, ...] = (
         name="Last Session End",
         device_class=SensorDeviceClass.TIMESTAMP,
         icon="mdi:clock-check-outline",
+        available_fn=lambda coord, b: b.get("report") is not None,
         value_fn=lambda coord, b: (
             dt_util.parse_datetime(
                 str(
                     _get_ci(
-                        _get_last_session(b.get("report", {})),
+                        _get_last_session(b.get("report") or {}),
                         "chargeProcessEndTime",
                         "endTime",
                         default="",
                     )
                 )
             )
-            if _get_last_session(b.get("report", {}))
+            if _get_last_session(b.get("report") or {})
             else None
         ),
     ),
@@ -616,10 +629,11 @@ SENSOR_DESCRIPTIONS: tuple[NeoVacSensorEntityDescription, ...] = (
         state_class=SensorStateClass.TOTAL,
         suggested_display_precision=2,
         icon="mdi:chart-bar",
+        available_fn=lambda coord, b: b.get("analytics") is not None,
         value_fn=lambda coord, b: (
             float(
                 _get_ci(
-                    b.get("analytics", {}),
+                    b.get("analytics") or {},
                     "totalChargingQuantityInkWh",
                     "chargeQuantityInkWh",
                 )
@@ -627,7 +641,7 @@ SENSOR_DESCRIPTIONS: tuple[NeoVacSensorEntityDescription, ...] = (
             if (
                 b.get("analytics")
                 and _get_ci(
-                    b.get("analytics", {}),
+                    b.get("analytics") or {},
                     "totalChargingQuantityInkWh",
                     "chargeQuantityInkWh",
                 ) is not None
@@ -635,7 +649,7 @@ SENSOR_DESCRIPTIONS: tuple[NeoVacSensorEntityDescription, ...] = (
             else None
         ),
         attr_fn=lambda coord, b: {
-            "analytics_data": b.get("analytics", {}),
+            "analytics_data": b.get("analytics") or {},
         },
     ),
     NeoVacSensorEntityDescription(
@@ -645,8 +659,9 @@ SENSOR_DESCRIPTIONS: tuple[NeoVacSensorEntityDescription, ...] = (
         native_unit_of_measurement="badges",
         state_class=SensorStateClass.MEASUREMENT,
         icon="mdi:credit-card-wireless",
+        available_fn=lambda coord, b: coord.data is not None and coord.data.get("rfids") is not None,
         value_fn=lambda coord, b: len(
-            coord.data.get("rfids", []) if coord.data else []
+            coord.data.get("rfids") or [] if coord.data else []
         ),
         attr_fn=lambda coord, b: {
             "badges": [
@@ -655,7 +670,7 @@ SENSOR_DESCRIPTIONS: tuple[NeoVacSensorEntityDescription, ...] = (
                     "name": _get_ci(r, "rfidName"),
                     "tag": _get_ci(r, "rfidTag"),
                 }
-                for r in (coord.data.get("rfids", []) if coord.data else [])
+                for r in ((coord.data.get("rfids") or []) if coord.data else [])
             ]
         },
     ),
@@ -667,6 +682,7 @@ SENSOR_DESCRIPTIONS: tuple[NeoVacSensorEntityDescription, ...] = (
         native_unit_of_measurement="CHF",
         suggested_display_precision=2,
         icon="mdi:file-document-outline",
+        available_fn=lambda coord, b: coord.data is not None and coord.data.get("invoices") is not None,
         value_fn=lambda coord, b: (
             float(
                 _get_ci(
@@ -690,7 +706,7 @@ SENSOR_DESCRIPTIONS: tuple[NeoVacSensorEntityDescription, ...] = (
         ),
         attr_fn=lambda coord, b: (
             {
-                "invoice_count": len(coord.data.get("invoices", [])),
+                "invoice_count": len(coord.data.get("invoices") or []),
                 "latest_invoice": coord.data["invoices"][0],
             }
             if coord.data and coord.data.get("invoices")
@@ -705,9 +721,10 @@ SENSOR_DESCRIPTIONS: tuple[NeoVacSensorEntityDescription, ...] = (
         state_class=SensorStateClass.MEASUREMENT,
         entity_category=EntityCategory.DIAGNOSTIC,
         icon="mdi:account-multiple-plus",
-        value_fn=lambda coord, b: len(b.get("guest_invitations", [])),
+        available_fn=lambda coord, b: b.get("guest_invitations") is not None,
+        value_fn=lambda coord, b: len(b.get("guest_invitations") or []),
         attr_fn=lambda coord, b: {
-            "invitations": b.get("guest_invitations", []),
+            "invitations": b.get("guest_invitations") or [],
         },
     ),
 )
@@ -744,6 +761,15 @@ class NeoVacSensorEntity(NeoVacEntity, SensorEntity):
         super().__init__(coordinator, charge_point_id)
         self.entity_description = description
         self._attr_unique_id = f"{self.charge_point_id}_{description.key}"
+
+    @property
+    def available(self) -> bool:
+        """Return True if entity is available."""
+        if not super().available:
+            return False
+        if self.entity_description.available_fn is not None:
+            return self.entity_description.available_fn(self.coordinator, self.cp_bundle)
+        return True
 
     @property
     def native_value(self) -> Any:

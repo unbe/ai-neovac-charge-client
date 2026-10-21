@@ -269,8 +269,11 @@ class NeoVacClient:
                     self.config["charge_point_id"] = cps[0].get("chargePointId")
                     self.config["serial_number"] = cps[0].get("serialNumber")
                     self.config["position"] = cps[0].get("position")
-        except Exception:
-            pass
+        except Exception as err:
+            print(
+                f"[Warning] Failed to auto-discover charge point settings during login: {err}",
+                file=sys.stderr,
+            )
 
         self.save_config()
         return self.config
@@ -341,8 +344,17 @@ class NeoVacClient:
                     return self._request(
                         endpoint, method=method, data=data, retry_on_401=False
                     )
-                except Exception:
-                    pass
+                except Exception as refresh_err:
+                    raise NeoVacAPIError(
+                        status_code=401,
+                        message=(
+                            f"Session expired and token refresh failed ({refresh_err}). "
+                            "Please re-login with 'python3 neovac_client.py login'."
+                        ),
+                        endpoint=endpoint,
+                        method=method,
+                        raw_body=str(refresh_err),
+                    ) from refresh_err
 
             error_body = err.read().decode("utf-8", errors="ignore")
             parsed_data = {}
@@ -745,7 +757,8 @@ class NeoVacClient:
                             pass
                 except TimeoutError:
                     continue
-                except Exception:
+                except Exception as err:
+                    print(f"[Telemetry WS] Disconnected: {err}", file=sys.stderr)
                     break
 
     def _stream_telemetry_long_polling(
@@ -763,39 +776,52 @@ class NeoVacClient:
             "Content-Type": "text/plain;charset=UTF-8",
         }
 
-        # Step 1: Handshake
-        handshake_payload = (json.dumps({"protocol": "json", "version": 1}) + "\x1e").encode("utf-8")
-        post_req = urllib.request.Request(connect_url, data=handshake_payload, headers=headers, method="POST")
-        with urllib.request.urlopen(post_req) as resp:
-            _ = resp.read()
+        try:
+            # Step 1: Handshake
+            handshake_payload = (json.dumps({"protocol": "json", "version": 1}) + "\x1e").encode("utf-8")
+            post_req = urllib.request.Request(connect_url, data=handshake_payload, headers=headers, method="POST")
+            with urllib.request.urlopen(post_req) as resp:
+                _ = resp.read()
 
-        # Step 2: Subscription
-        if hub_name == "connector":
-            sub_target = "JoinConnectorAsync"
-            sub_args: list[Any] = [self.default_charge_point_id, 1]
-        else:
-            sub_target = "SubscribeToTransactionsFromAllSites"
-            sub_args = []
+            # Step 2: Subscription
+            if hub_name == "connector":
+                sub_target = "JoinConnectorAsync"
+                sub_args: list[Any] = [self.default_charge_point_id, 1]
+            else:
+                sub_target = "SubscribeToTransactionsFromAllSites"
+                sub_args = []
 
-        sub_msg = (
-            json.dumps({
-                "type": 1,
-                "target": sub_target,
-                "arguments": sub_args,
-            })
-            + "\x1e"
-        ).encode("utf-8")
-        sub_req = urllib.request.Request(connect_url, data=sub_msg, headers=headers, method="POST")
-        with urllib.request.urlopen(sub_req) as resp:
-            _ = resp.read()
+            sub_msg = (
+                json.dumps({
+                    "type": 1,
+                    "target": sub_target,
+                    "arguments": sub_args,
+                })
+                + "\x1e"
+            ).encode("utf-8")
+            sub_req = urllib.request.Request(connect_url, data=sub_msg, headers=headers, method="POST")
+            with urllib.request.urlopen(sub_req) as resp:
+                _ = resp.read()
+        except urllib.error.HTTPError as err:
+            if err.code in (401, 403):
+                raise NeoVacAPIError(
+                    status_code=err.code,
+                    message=f"SignalR long-polling handshake auth failed (HTTP {err.code})",
+                    endpoint=f"/mobile/hubs/{hub_name}",
+                    method="POST",
+                    raw_body=str(err),
+                ) from err
+            raise
 
         # Step 3: Poll incoming telemetry stream
         end_time = time.time() + duration_seconds
+        lp_backoff = 1.0
         while time.time() < end_time:
             poll_req = urllib.request.Request(connect_url, headers=headers, method="GET")
             try:
                 with urllib.request.urlopen(poll_req) as resp:
                     raw_messages = resp.read().decode("utf-8")
+                    lp_backoff = 1.0
                     if raw_messages:
                         for chunk in raw_messages.split("\x1e"):
                             if not chunk.strip():
@@ -818,9 +844,23 @@ class NeoVacClient:
                 if err.code in (204, 503):
                     time.sleep(1)
                     continue
+                if err.code in (401, 403):
+                    raise NeoVacAPIError(
+                        status_code=err.code,
+                        message=f"SignalR long-polling auth failed (HTTP {err.code})",
+                        endpoint=f"/mobile/hubs/{hub_name}",
+                        method="GET",
+                        raw_body=str(err),
+                    ) from err
+                print(f"[Telemetry Long-Polling] HTTP error {err.code}: {err}", file=sys.stderr)
                 break
-            except Exception:
-                time.sleep(1)
+            except Exception as err:
+                print(
+                    f"[Telemetry Long-Polling] Error: {err}. Re-polling in {lp_backoff:.1f}s...",
+                    file=sys.stderr,
+                )
+                time.sleep(lp_backoff)
+                lp_backoff = min(lp_backoff * 2.0, 15.0)
 
     def stream_telemetry(
         self,
@@ -851,6 +891,11 @@ class NeoVacClient:
         selected_transport = transport
         if selected_transport == "auto":
             selected_transport = "websocket" if HAS_WEBSOCKETS else "long-polling"
+        elif selected_transport == "websocket" and not HAS_WEBSOCKETS:
+            raise RuntimeError(
+                "The 'websockets' package is required for WebSocket transport. "
+                "Install it with 'pip install websockets' or 'sudo apt install python3-websockets'."
+            )
 
         end_time = time.time() + duration_seconds
         backoff = 2.0
@@ -885,11 +930,25 @@ class NeoVacClient:
 
                 if time.time() - connected_at >= 30.0:
                     backoff = 2.0
-            except Exception:
+            except Exception as err:
+                # Re-raise immediately on unrecoverable errors:
+                # 1. Missing websockets package when explicitly requested
+                if isinstance(err, RuntimeError) and "websockets" in str(err).lower() and transport != "auto":
+                    raise
+                # 2. HTTP 401/403 or NeoVacAPIError 401/403 auth errors
+                if isinstance(err, urllib.error.HTTPError) and err.code in (401, 403):
+                    raise
+                if isinstance(err, NeoVacAPIError) and err.status_code in (401, 403):
+                    raise
+
                 if transport == "auto" and selected_transport == "websocket":
                     selected_transport = "long-polling"
 
                 sleep_time = min(backoff, max(0.0, end_time - time.time()))
+                print(
+                    f"[Telemetry] Connection lost ({err}). Reconnecting in {sleep_time:.1f}s...",
+                    file=sys.stderr,
+                )
                 if sleep_time > 0:
                     time.sleep(sleep_time)
                 backoff = min(backoff * 2.0, max_backoff)

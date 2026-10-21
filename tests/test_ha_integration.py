@@ -184,6 +184,7 @@ def _install_ha_stubs() -> None:
             self.name = name
             self.update_interval = update_interval
             self.data: Any = None
+            self.last_update_success: bool = True
 
         def async_set_updated_data(self, data: Any) -> None:
             self.data = data
@@ -201,6 +202,10 @@ def _install_ha_stubs() -> None:
         def __init__(self, coordinator: Any) -> None:
             self.coordinator = coordinator
             self._remove_callbacks: list[Any] = []
+
+        @property
+        def available(self) -> bool:
+            return getattr(self.coordinator, "last_update_success", True)
 
         def async_on_remove(self, fn: Any) -> None:
             self._remove_callbacks.append(fn)
@@ -1465,6 +1470,259 @@ class TestNeoVacIntegration(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(events[1]["arguments"][0]["currentPowerKw"], 0.0)
         self.assertGreaterEqual(len(cli_sleep_calls), 1)
         self.assertEqual(cli_sleep_calls[0], 2.0)
+
+    async def test_error_handling_unavailable_entities(self) -> None:
+        """Verify that sub-resource fetch failures result in Unavailable entities (Item 1)."""
+        _install_ha_stubs()
+        from unittest.mock import AsyncMock, MagicMock
+        from custom_components.neovac_mycharge import coordinator, sensor, select
+
+        hass = MagicMock()
+        entry = MagicMock()
+        entry.data = {}
+        entry.options = {}
+        client = MagicMock()
+
+        # user_info succeeds with one site and one charge point
+        client.async_get_user_info = AsyncMock(
+            return_value={
+                "accountId": "ACC-TEST",
+                "sites": [
+                    {
+                        "siteId": "SITE-1",
+                        "siteName": "Test Site",
+                        "userChargePoints": [
+                            {
+                                "chargePointId": 1001,
+                                "position": "Garage",
+                                "status": "Available",
+                            }
+                        ],
+                    }
+                ],
+            }
+        )
+
+        # All sub-resources fail
+        client.async_list_rfids = AsyncMock(side_effect=Exception("RFID fetch failed"))
+        client.async_list_invoices = AsyncMock(
+            side_effect=Exception("Invoices fetch failed")
+        )
+        client.async_get_notification_settings = AsyncMock(
+            side_effect=Exception("Settings failed")
+        )
+        client.async_get_charge_report = AsyncMock(
+            side_effect=Exception("Report failed")
+        )
+        client.async_get_analytics = AsyncMock(
+            side_effect=Exception("Analytics failed")
+        )
+        client.async_get_pricing = AsyncMock(side_effect=Exception("Pricing failed"))
+        client.async_get_guest_invitations = AsyncMock(
+            side_effect=Exception("Invitations failed")
+        )
+
+        coord = coordinator.NeoVacDataUpdateCoordinator(hass, entry, client)
+        coord.enable_websocket = False
+        data = await coord._async_update_data()
+        coord.data = data
+        coord.last_update_success = True
+
+        # Assert coordinator data stores None for failed fetches
+        self.assertIsNone(data["rfids"])
+        self.assertIsNone(data["invoices"])
+        self.assertIsNone(data["notification_settings"])
+        cp_data = data["charge_points"][1001]
+        self.assertIsNone(cp_data["report"])
+        self.assertIsNone(cp_data["analytics"])
+        self.assertIsNone(cp_data["pricing"])
+        self.assertIsNone(cp_data["guest_invitations"])
+
+        # Check sensors available property
+        sensor_map = {}
+        for desc in sensor.SENSOR_DESCRIPTIONS:
+            s = sensor.NeoVacSensorEntity(coord, 1001, desc)
+            sensor_map[desc.key] = s
+
+        # Sensors that depend on report -> False
+        self.assertFalse(sensor_map["report_30d_energy"].available)
+        self.assertFalse(sensor_map["report_30d_cost"].available)
+        self.assertFalse(sensor_map["report_30d_sessions"].available)
+        self.assertFalse(sensor_map["last_session_energy"].available)
+        self.assertFalse(sensor_map["last_session_cost"].available)
+        self.assertFalse(sensor_map["last_session_end"].available)
+
+        # Sensors that depend on analytics -> False
+        self.assertFalse(sensor_map["monthly_analytics_energy"].available)
+
+        # Electricity tariff (no pricing and no live transaction price) -> False
+        self.assertFalse(sensor_map["electricity_tariff"].available)
+
+        # RFID badges and invoices -> False
+        self.assertFalse(sensor_map["registered_rfids"].available)
+        self.assertFalse(sensor_map["latest_invoice"].available)
+
+        # Guest invitations -> False
+        self.assertFalse(sensor_map["guest_invitations"].available)
+
+        # Basic station status sensors without sub-resource dependencies remain available
+        self.assertTrue(sensor_map["station_status"].available)
+        self.assertTrue(sensor_map["connector_status"].available)
+
+        # Select entity -> False
+        rfid_select = select.NeoVacRfidSelectEntity(coord, 1001)
+        self.assertFalse(rfid_select.available)
+
+        # Now test when sub-resources succeed: they are available == True
+        coord.data["rfids"] = [{"rfidTag": "TAG1", "rfidName": "Card"}]
+        coord.data["invoices"] = [{"totalAmount": 10.0}]
+        coord.data["charge_points"][1001]["report"] = {"chargeReport": []}
+        coord.data["charge_points"][1001]["analytics"] = {
+            "totalChargingQuantityInkWh": 5.0
+        }
+        coord.data["charge_points"][1001]["pricing"] = {"defaultTariffPrice": 0.3}
+        coord.data["charge_points"][1001]["guest_invitations"] = []
+
+        self.assertTrue(sensor_map["report_30d_energy"].available)
+        self.assertTrue(sensor_map["monthly_analytics_energy"].available)
+        self.assertTrue(sensor_map["electricity_tariff"].available)
+        self.assertTrue(sensor_map["registered_rfids"].available)
+        self.assertTrue(sensor_map["latest_invoice"].available)
+        self.assertTrue(sensor_map["guest_invitations"].available)
+        self.assertTrue(rfid_select.available)
+
+    async def test_websocket_permanent_auth_failure_reauth(self) -> None:
+        """Verify that permanent auth failure on WebSocket reconnect terminates and triggers reauth (Item 2)."""
+        _install_ha_stubs()
+        from unittest.mock import AsyncMock, MagicMock
+        from custom_components.neovac_mycharge import api, coordinator, const
+
+        hass = MagicMock()
+        entry = MagicMock()
+        entry.data = {}
+        entry.options = {}
+        entry.async_start_reauth = MagicMock()
+        client = MagicMock()
+
+        # First connection attempt fails with NeoVacAuthError (e.g. 401)
+        client.async_stream_signalr_hub = AsyncMock(
+            side_effect=api.NeoVacAuthError("Hub token expired")
+        )
+        # Refresh token fails permanently with NeoVacAuthError
+        client.async_refresh_access_token = AsyncMock(
+            side_effect=api.NeoVacAuthError("Refresh token expired")
+        )
+
+        coord = coordinator.NeoVacDataUpdateCoordinator(hass, entry, client)
+        await coord._async_hub_loop(const.HUB_EVENTS, [1001])
+
+        # Verify entry.async_start_reauth was called
+        entry.async_start_reauth.assert_called_once_with(hass)
+
+    async def test_api_timeout_and_network_error_wrapping(self) -> None:
+        """Verify that aiohttp ClientError / TimeoutError / OSError are wrapped in NeoVacConnectionError (Item 3)."""
+        _install_ha_stubs()
+        from unittest.mock import MagicMock
+        import aiohttp
+        from custom_components.neovac_mycharge import api
+
+        session = MagicMock()
+        session.request = MagicMock(
+            side_effect=aiohttp.ClientConnectorError(
+                MagicMock(), OSError("Connection refused")
+            )
+        )
+        session.post = MagicMock(side_effect=asyncio.TimeoutError("Timeout"))
+
+        client = api.NeoVacAsyncClient(
+            session=session, access_token="token", refresh_token="refresh"
+        )
+
+        with self.assertRaises(api.NeoVacConnectionError):
+            await client._request("/test")
+
+        with self.assertRaises(api.NeoVacConnectionError):
+            await client.async_refresh_access_token()
+
+        with self.assertRaises(api.NeoVacConnectionError):
+            await client.async_exchange_code("code", "verifier")
+
+    def test_cli_error_handling_improvements(self) -> None:
+        """Verify CLI error handling fixes (Items 7, 8, 9, 10)."""
+        import io
+        from unittest.mock import patch, MagicMock
+        import urllib.error
+        import neovac_client
+
+        # Item 10: complete_login logs warning to stderr if get_user_info fails
+        cli_client = neovac_client.NeoVacClient()
+        cli_client.config_path = Path("/tmp/test_neovac_cfg.json")
+        cli_client.save_config = lambda: None  # type: ignore[assignment]
+
+        with patch.object(
+            cli_client,
+            "get_user_info",
+            side_effect=Exception("Discovery network failure"),
+        ), patch("urllib.request.urlopen") as mock_urlopen, patch(
+            "sys.stderr", new_callable=io.StringIO
+        ) as mock_stderr:
+            mock_resp = MagicMock()
+            mock_resp.read.return_value = json.dumps(
+                {"access_token": "acc", "refresh_token": "ref"}
+            ).encode("utf-8")
+            mock_urlopen.return_value.__enter__.return_value = mock_resp
+
+            cli_client.complete_login("code_123", "verifier_123")
+            self.assertIn(
+                "Failed to auto-discover charge point settings",
+                mock_stderr.getvalue(),
+            )
+
+        # Item 9: _request raises helpful NeoVacAPIError if refresh fails on 401
+        cli_client.config["access_token"] = "expired_token"
+        cli_client.config["refresh_token"] = "bad_refresh_token"
+
+        def mock_401_urlopen(req: Any) -> Any:
+            raise urllib.error.HTTPError(
+                req.full_url, 401, "Unauthorized", {}, io.BytesIO(b"")
+            )
+
+        with patch("urllib.request.urlopen", side_effect=mock_401_urlopen), patch.object(
+            cli_client,
+            "refresh_access_token",
+            side_effect=Exception("invalid_grant"),
+        ):
+            with self.assertRaises(neovac_client.NeoVacAPIError) as ctx:
+                cli_client._request("/mobile/api/user/info")
+            self.assertIn("Session expired and token refresh failed", str(ctx.exception))
+            self.assertIn("Please re-login", str(ctx.exception))
+
+        # Item 7: stream_telemetry with transport='websocket' immediately re-raises if websockets missing
+        with patch("neovac_client.HAS_WEBSOCKETS", False):
+            with self.assertRaises(RuntimeError) as ctx_ws:
+                list(
+                    cli_client.stream_telemetry(
+                        transport="websocket", duration_seconds=5
+                    )
+                )
+            self.assertIn("websockets", str(ctx_ws.exception).lower())
+
+        # Item 8: _stream_telemetry_long_polling raises NeoVacAPIError on 401
+        with patch.object(
+            cli_client, "_negotiate_signalr", return_value={"connectionToken": "token"}
+        ), patch(
+            "urllib.request.urlopen",
+            side_effect=urllib.error.HTTPError(
+                "url", 401, "Unauthorized", {}, io.BytesIO(b"")
+            ),
+        ):
+            with self.assertRaises(neovac_client.NeoVacAPIError) as ctx_lp:
+                list(
+                    cli_client._stream_telemetry_long_polling(
+                        "events", "token", duration_seconds=5
+                    )
+                )
+            self.assertEqual(ctx_lp.exception.status_code, 401)
 
 
 if __name__ == "__main__":

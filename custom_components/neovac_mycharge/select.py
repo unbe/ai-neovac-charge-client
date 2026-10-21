@@ -45,11 +45,22 @@ class NeoVacRfidSelectEntity(NeoVacEntity, SelectEntity):
         super().__init__(coordinator, charge_point_id)
         self._attr_unique_id = f"{self.charge_point_id}_rfid_badge"
 
+    @property
+    def available(self) -> bool:
+        """Return True if entity is available."""
+        return (
+            super().available
+            and self.coordinator.data is not None
+            and self.coordinator.data.get("rfids") is not None
+        )
+
     def _build_option_map(self) -> dict[str, str | None]:
         """Maps display option strings to raw RFID hex tags."""
         mapping: dict[str, str | None] = {DEFAULT_RFID_OPTION: None}
         rfids = (
-            self.coordinator.data.get("rfids", []) if self.coordinator.data else []
+            self.coordinator.data.get("rfids") or []
+            if self.coordinator.data
+            else []
         )
         for r in rfids:
             tag = _get_ci(r, "rfidTag")
