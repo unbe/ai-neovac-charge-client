@@ -438,10 +438,38 @@ class NeoVacDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self, target: str, arguments: list[Any]
     ) -> None:
         """Processes incoming real-time SignalR invocation messages."""
-        if not self.data or not arguments:
+        if not self.data:
             return
 
         try:
+            # Handle account-level push events that are not bound to a specific charge point
+            if target == "UpdateRfid":
+                _LOGGER.info("Received UpdateRfid SignalR event, refreshing registered RFID badges")
+                try:
+                    new_rfids = await self.client.async_list_rfids()
+                    self.data["rfids"] = new_rfids
+                    self.async_set_updated_data(self.data)
+                except Exception as err:
+                    _LOGGER.warning("Failed to refresh RFIDs after UpdateRfid event: %s", err)
+                return
+
+            if target == "UpdateUserNotificationSettings":
+                _LOGGER.info("Received UpdateUserNotificationSettings SignalR event, refreshing notification settings")
+                try:
+                    new_settings = await self.client.async_get_notification_settings()
+                    self.data["notification_settings"] = new_settings
+                    self.async_set_updated_data(self.data)
+                except Exception as err:
+                    _LOGGER.warning("Failed to refresh notification settings: %s", err)
+                return
+
+            if target in ("SiteNameChanged", "SitesChanged", "ChargePointAddedMobileDto", "ChargePointDeleteMobileDto"):
+                _LOGGER.info("Received %s SignalR event, requesting coordinator refresh", target)
+                self.hass.async_create_task(self.async_request_refresh())
+                return
+
+            if not arguments:
+                return
             first_arg = arguments[0] if isinstance(arguments[0], dict) else {}
             charge_points = self.data.get("charge_points", {})
             if not charge_points:

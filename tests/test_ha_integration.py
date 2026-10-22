@@ -517,6 +517,9 @@ class TestNeoVacIntegration(unittest.IsolatedAsyncioTestCase):
             "night_charging": False,
             "plug_and_charge": True,
             "station_name": "Garage Slot 1",
+            "rfids": [
+                {"id": 1, "rfidName": "Primary Card", "rfidTag": "04AABBCCDD"}
+            ],
         }
 
         async def handle_token(request: web.Request) -> web.Response:
@@ -565,14 +568,10 @@ class TestNeoVacIntegration(unittest.IsolatedAsyncioTestCase):
         async def handle_rfids(request: web.Request) -> web.Response:
             if request.method == "POST":
                 body = await request.json()
-                return web.json_response({"id": 2, **body})
-            return web.json_response(
-                {
-                    "rfids": [
-                        {"id": 1, "rfidName": "Primary Card", "rfidTag": "04AABBCCDD"}
-                    ]
-                }
-            )
+                new_rfid = {"id": len(state["rfids"]) + 1, **body}
+                state["rfids"].append(new_rfid)
+                return web.json_response(new_rfid)
+            return web.json_response({"rfids": state["rfids"]})
 
         async def handle_report(request: web.Request) -> web.Response:
             return web.json_response(
@@ -899,6 +898,13 @@ class TestNeoVacIntegration(unittest.IsolatedAsyncioTestCase):
                     ],
                 )
                 self.assertEqual(sensor_by_key["station_status"].native_value, "SuspendedEV")
+
+                # Test UpdateRfid SignalR event updates registered RFIDs and select options without restart
+                self.assertEqual(sensor_by_key["registered_rfids"].native_value, 1)
+                state["rfids"].append({"id": 2, "rfidName": "Secondary Card", "rfidTag": "04EEFF0011"})
+                await coord.async_handle_signalr_event("UpdateRfid", [])
+                self.assertEqual(sensor_by_key["registered_rfids"].native_value, 2)
+                self.assertIn("Secondary Card (04EEFF0011)", selects[0].options)
 
                 # Test diagnostics redaction
                 diag = await diagnostics.async_get_config_entry_diagnostics(hass, entry)
