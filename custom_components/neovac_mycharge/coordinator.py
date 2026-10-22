@@ -445,6 +445,16 @@ class NeoVacDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             # Handle account-level push events that are not bound to a specific charge point
             if target == "UpdateRfid":
                 _LOGGER.info("Received UpdateRfid SignalR event, refreshing registered RFID badges")
+                # If server passed the updated list directly in arguments, apply it immediately
+                if arguments and isinstance(arguments[0], list):
+                    self.data["rfids"] = arguments[0]
+                    self.async_set_updated_data(self.data)
+                    return
+                if arguments and isinstance(arguments[0], dict) and isinstance(arguments[0].get("rfids"), list):
+                    self.data["rfids"] = arguments[0]["rfids"]
+                    self.async_set_updated_data(self.data)
+                    return
+                # Otherwise re-fetch via REST as the official mobile app does (UpdateRfid takes 0 arguments)
                 try:
                     new_rfids = await self.client.async_list_rfids()
                     self.data["rfids"] = new_rfids
@@ -455,6 +465,13 @@ class NeoVacDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
             if target == "UpdateUserNotificationSettings":
                 _LOGGER.info("Received UpdateUserNotificationSettings SignalR event, refreshing notification settings")
+                if arguments and isinstance(arguments[0], dict):
+                    self.data["notification_settings"] = {
+                        **(self.data.get("notification_settings") or {}),
+                        **arguments[0],
+                    }
+                    self.async_set_updated_data(self.data)
+                    return
                 try:
                     new_settings = await self.client.async_get_notification_settings()
                     self.data["notification_settings"] = new_settings
