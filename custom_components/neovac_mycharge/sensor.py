@@ -20,7 +20,13 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.util import dt as dt_util
 
-from .const import ALL_STATION_STATUSES, DOMAIN, STATUS_CHARGING, STATUS_UNKNOWN
+from .const import (
+    ALL_STATION_STATUSES,
+    DOMAIN,
+    STATUS_CHARGING,
+    STATUS_UNKNOWN,
+    canonical_status,
+)
 from .coordinator import NeoVacDataUpdateCoordinator, _get_ci
 from .entity import NeoVacEntity
 
@@ -321,9 +327,7 @@ SENSOR_DESCRIPTIONS: tuple[NeoVacSensorEntityDescription, ...] = (
         options=ALL_STATION_STATUSES,
         icon="mdi:ev-station",
         value_fn=lambda coord, b: (
-            _get_ci(b.get("info", {}), "status")
-            if _get_ci(b.get("info", {}), "status") in ALL_STATION_STATUSES
-            else STATUS_UNKNOWN
+            canonical_status(_get_ci(b.get("info", {}), "status"))
         ),
         attr_fn=lambda coord, b: {
             "neovac_id": _get_ci(b.get("info", {}), "neoVacId"),
@@ -341,10 +345,7 @@ SENSOR_DESCRIPTIONS: tuple[NeoVacSensorEntityDescription, ...] = (
         options=ALL_STATION_STATUSES,
         icon="mdi:ev-plug-type2",
         value_fn=lambda coord, b: (
-            _get_ci(b.get("info", {}), "connectorZeroStatus", "status")
-            if _get_ci(b.get("info", {}), "connectorZeroStatus", "status")
-            in ALL_STATION_STATUSES
-            else STATUS_UNKNOWN
+            canonical_status(_get_ci(b.get("info", {}), "connectorZeroStatus", "status"))
         ),
     ),
     NeoVacSensorEntityDescription(

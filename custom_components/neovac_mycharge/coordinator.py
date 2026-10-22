@@ -36,6 +36,8 @@ from .const import (
     HUB_EVENTS,
     STATUS_CHARGING,
     STATUS_FINISHING,
+    canonical_status,
+    resolve_best_status,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -56,6 +58,14 @@ def _get_ci(data: dict[str, Any], *keys: str, default: Any = None) -> Any:
         if pascal in data and data[pascal] is not None:
             return data[pascal]
     return default
+
+
+def _extract_station_status(data: dict[str, Any]) -> str | None:
+    """Extracts and resolves the best station status from payload fields."""
+    st = _get_ci(data, "status")
+    ocpp = _get_ci(data, "ocppStatus", "connectorState", "statusUpdate")
+    conn_zero = _get_ci(data, "connectorZeroStatus")
+    return resolve_best_status(st, ocpp, conn_zero)
 
 
 class NeoVacDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
@@ -261,8 +271,9 @@ class NeoVacDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 else:
                     invitations = None
 
-                status = _get_ci(cp, "status") or _get_ci(cp, "connectorZeroStatus")
-                self._check_and_emit_status_transitions(cp_id, status)
+                status = _extract_station_status(cp)
+                if status:
+                    self._check_and_emit_status_transitions(cp_id, status)
 
                 existing_cp = (
                     self.data.get("charge_points", {}).get(cp_id, {})
@@ -461,7 +472,7 @@ class NeoVacDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                         if is_online is not None:
                             cb_info["isOnline"] = bool(is_online)
                         conn_id = _get_ci(item, "connectorId")
-                        new_st = _get_ci(item, "ocppStatus", "status")
+                        new_st = _extract_station_status(item)
                         if (conn_id == 1 or conn_id is None) and new_st:
                             cb_info["status"] = new_st
                             cb_info["connectorZeroStatus"] = new_st
@@ -499,17 +510,20 @@ class NeoVacDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             if target in ("OnTransactionReport", "ReceiveConnectorTransactionUpdate"):
                 live_tx = {**self._live_transactions.get(cp_id, {}), **first_arg}
                 has_end = bool(_get_ci(first_arg, "end", "hasEnd", "transactionEnded", default=False))
-                tx_status = _get_ci(first_arg, "status", "ocppStatus")
+                tx_status = _extract_station_status(first_arg)
 
                 if has_end:
                     self._live_transactions[cp_id] = live_tx
                     cp_bundle["live_transaction"] = live_tx
+                    prev_st = self._previous_statuses.get(cp_id)
+                    end_st = tx_status or STATUS_FINISHING
                     self._check_and_emit_status_transitions(
                         cp_id,
-                        tx_status or STATUS_FINISHING,
+                        end_st,
                         extra={"transaction_id": _get_ci(first_arg, "transactionId")},
                     )
-                    self._emit_event(cp_id, EVENT_CHARGING_STOPPED, live_tx)
+                    if prev_st == end_st:
+                        self._emit_event(cp_id, EVENT_CHARGING_STOPPED, live_tx)
                     self.async_set_updated_data(self.data)
                     # Refresh historical reports so last session & 30-day totals update
                     self.hass.async_create_task(self.async_request_refresh())
@@ -532,21 +546,23 @@ class NeoVacDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 self.async_set_updated_data(self.data)
 
             elif target == "StartTransactionNotification":
-                st = _get_ci(first_arg, "status", "ocppStatus")
-                if st:
-                    cp_info["status"] = st
-                    cp_info["connectorZeroStatus"] = st
-                self._check_and_emit_status_transitions(cp_id, st or STATUS_CHARGING, extra=first_arg)
-                self._emit_event(cp_id, EVENT_CHARGING_STARTED, first_arg)
+                st = _extract_station_status(first_arg) or STATUS_CHARGING
+                cp_info["status"] = st
+                cp_info["connectorZeroStatus"] = st
+                prev_st = self._previous_statuses.get(cp_id)
+                self._check_and_emit_status_transitions(cp_id, st, extra=first_arg)
+                if prev_st == st:
+                    self._emit_event(cp_id, EVENT_CHARGING_STARTED, first_arg)
                 self.async_set_updated_data(self.data)
 
             elif target == "StopTransactionNotification":
-                st = _get_ci(first_arg, "status", "ocppStatus")
-                if st:
-                    cp_info["status"] = st
-                    cp_info["connectorZeroStatus"] = st
-                self._check_and_emit_status_transitions(cp_id, st or STATUS_FINISHING, extra=first_arg)
-                self._emit_event(cp_id, EVENT_CHARGING_STOPPED, first_arg)
+                st = _extract_station_status(first_arg) or STATUS_FINISHING
+                cp_info["status"] = st
+                cp_info["connectorZeroStatus"] = st
+                prev_st = self._previous_statuses.get(cp_id)
+                self._check_and_emit_status_transitions(cp_id, st, extra=first_arg)
+                if prev_st == st:
+                    self._emit_event(cp_id, EVENT_CHARGING_STOPPED, first_arg)
                 self.async_set_updated_data(self.data)
                 self.hass.async_create_task(self.async_request_refresh())
 
@@ -560,7 +576,7 @@ class NeoVacDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 "ConnectorChanged",
                 "StatusNotificationReceivedIntegrationEvent",
             ):
-                new_status = _get_ci(first_arg, "status", "ocppStatus", "connectorState")
+                new_status = _extract_station_status(first_arg)
                 if new_status:
                     cp_info["status"] = new_status
                     cp_info["connectorZeroStatus"] = new_status

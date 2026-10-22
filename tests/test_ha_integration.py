@@ -12,6 +12,7 @@ from pathlib import Path
 import sys
 import types
 import unittest
+from unittest.mock import AsyncMock, MagicMock, patch
 from typing import Any
 
 from aiohttp import WSMsgType, web
@@ -311,7 +312,11 @@ def _install_ha_stubs() -> None:
     ha_comp_text.TextEntity = TextEntity
 
     class EventEntity:
-        event_types: list[str] = []
+        _attr_event_types: list[str] = []
+
+        @property
+        def event_types(self) -> list[str]:
+            return getattr(self, "_attr_event_types", [])
 
         def _trigger_event(self, event_type: str, event_attributes: dict[str, Any] | None = None) -> None:
             self._last_triggered_event = (event_type, event_attributes or {})
@@ -413,10 +418,45 @@ class TestNeoVacIntegration(unittest.IsolatedAsyncioTestCase):
         # Initial load (previous=None) emits nothing
         self.assertEqual(evaluate_state_transitions(None, "Available"), [])
 
-        # Plug in cable
+        # Plug in cable (NeoVac backend uses "Connected")
+        self.assertEqual(
+            evaluate_state_transitions("Available", "Connected"),
+            [const.EVENT_CABLE_PLUGGED_IN],
+        )
+        # Case insensitivity check
+        self.assertEqual(
+            evaluate_state_transitions("available", "connected"),
+            [const.EVENT_CABLE_PLUGGED_IN],
+        )
+        # Occupied plug in
+        self.assertEqual(
+            evaluate_state_transitions("Available", "Occupied"),
+            [const.EVENT_CABLE_PLUGGED_IN],
+        )
+        # Plug in cable (OCPP Preparing)
         self.assertEqual(
             evaluate_state_transitions("Available", "Preparing"),
             [const.EVENT_CABLE_PLUGGED_IN],
+        )
+        # Connected -> Charging (User presses "Charge" button after cable is plugged in)
+        self.assertEqual(
+            evaluate_state_transitions("Connected", "Charging"),
+            [const.EVENT_CHARGING_STARTED],
+        )
+        # Stop charging with cable remaining plugged in (Charging -> Connected)
+        self.assertEqual(
+            evaluate_state_transitions("Charging", "Connected"),
+            [const.EVENT_CHARGING_STOPPED],
+        )
+        # Unplug cable (Connected -> Available)
+        self.assertEqual(
+            evaluate_state_transitions("Connected", "Available"),
+            [const.EVENT_CABLE_UNPLUGGED],
+        )
+        # Occupied -> Available
+        self.assertEqual(
+            evaluate_state_transitions("Occupied", "Available"),
+            [const.EVENT_CABLE_UNPLUGGED],
         )
         # Plug in and start charging directly
         self.assertEqual(
@@ -458,6 +498,29 @@ class TestNeoVacIntegration(unittest.IsolatedAsyncioTestCase):
             evaluate_state_transitions("Charging", "Faulted"),
             [const.EVENT_ERROR],
         )
+
+        # Priority resolution tests (resolve_best_status)
+        self.assertEqual(
+            const.resolve_best_status("Connected", "Available"),
+            "Connected",
+        )
+        self.assertEqual(
+            const.resolve_best_status("Connected", "SuspendedEV"),
+            "SuspendedEV",
+        )
+        self.assertEqual(
+            const.resolve_best_status("Connected", "Charging"),
+            "Charging",
+        )
+        self.assertEqual(
+            const.resolve_best_status("Available", "Faulted"),
+            "Faulted",
+        )
+        self.assertEqual(
+            const.resolve_best_status("connected", None),
+            "Connected",
+        )
+        self.assertIsNone(const.resolve_best_status(None, None))
 
     async def test_api_coordinator_and_entities_end_to_end(self) -> None:
         """End-to-end test with mock HTTP REST + SignalR WebSocket server."""
@@ -1724,6 +1787,164 @@ class TestNeoVacIntegration(unittest.IsolatedAsyncioTestCase):
                     )
                 )
             self.assertEqual(ctx_lp.exception.status_code, 401)
+
+    async def test_cable_plugged_event_before_charging_button_pressed(self) -> None:
+        """Verify cable plug-in emits EVENT_CABLE_PLUGGED_IN immediately upon connection,
+
+        before the user presses the charge button, and pressing charge button emits
+        EVENT_CHARGING_STARTED without a duplicate EVENT_CABLE_PLUGGED_IN.
+        """
+        hass = sys.modules["homeassistant.core"].HomeAssistant()
+        entry = sys.modules["homeassistant.config_entries"].ConfigEntry(
+            data={const.CONF_ENABLE_WEBSOCKET: False}
+        )
+        mock_client = MagicMock()
+        mock_client.async_get_user_info = AsyncMock(
+            return_value={
+                "accountId": "ACC_TEST_01",
+                "sites": [
+                    {
+                        "siteId": "SITE_TEST_01",
+                        "siteName": "Garage",
+                        "userChargePoints": [
+                            {
+                                "chargePointId": 1001,
+                                "neoVacId": "NV-1001",
+                                "serialNumber": "SN-PLUG-01",
+                                "position": "Slot 1",
+                                "status": "Available",
+                                "connectorZeroStatus": "Available",
+                                "isOnline": True,
+                            }
+                        ],
+                    }
+                ],
+            }
+        )
+        mock_client.async_list_rfids = AsyncMock(return_value=[])
+        mock_client.async_list_invoices = AsyncMock(return_value=[])
+        mock_client.async_get_notification_settings = AsyncMock(return_value={})
+        mock_client.async_get_charge_report = AsyncMock(return_value={})
+        mock_client.async_get_analytics = AsyncMock(return_value={})
+        mock_client.async_get_pricing = AsyncMock(return_value={})
+        mock_client.async_get_guest_invitations = AsyncMock(return_value=[])
+
+        coord = coordinator.NeoVacDataUpdateCoordinator(hass, entry, mock_client)
+        await coord.async_config_entry_first_refresh()
+        hass.data[const.DOMAIN] = {entry.entry_id: coord}
+
+        sensors: list[Any] = []
+        binary_sensors: list[Any] = []
+        events: list[Any] = []
+
+        await sensor.async_setup_entry(hass, entry, sensors.extend)
+        await binary_sensor.async_setup_entry(hass, entry, binary_sensors.extend)
+        await event.async_setup_entry(hass, entry, events.extend)
+        for ev_ent in events:
+            await ev_ent.async_added_to_hass()
+
+        sensor_by_key = {s.entity_description.key: s for s in sensors}
+        bs_by_key = {b.entity_description.key: b for b in binary_sensors}
+        charging_event_entity = events[0]
+
+        # Initial baseline: station is Available, cable is NOT plugged in
+        self.assertEqual(sensor_by_key["station_status"].native_value, "Available")
+        self.assertFalse(bs_by_key["cable_plugged_in"].is_on)
+        self.assertFalse(bs_by_key["charging"].is_on)
+        self.assertEqual(len(hass.fired_events), 0)
+
+        # 1. User plugs in cable to station:
+        # NeoVac sends ReceiveChargePointSiteStatusFullUpdate with status='Connected', ocppStatus='Available'
+        await coord.async_handle_signalr_event(
+            "ReceiveChargePointSiteStatusFullUpdate",
+            [
+                [
+                    {
+                        "chargePointSerialNo": "SN-PLUG-01",
+                        "connectorId": 1,
+                        "status": "Connected",
+                        "ocppStatus": "Available",
+                        "isOnline": True,
+                    }
+                ]
+            ],
+        )
+
+        # Verify: Cable plugged in event fired immediately!
+        fired_types = [evt_type for evt_type, _ in hass.fired_events]
+        self.assertIn("neovac_mycharge_cable_plugged_in", fired_types)
+        self.assertEqual(fired_types.count("neovac_mycharge_cable_plugged_in"), 1)
+        self.assertNotIn("neovac_mycharge_charging_started", fired_types)
+
+        # Verify entities reflect plugged in state
+        self.assertTrue(bs_by_key["cable_plugged_in"].is_on)
+        self.assertFalse(bs_by_key["charging"].is_on)
+        self.assertEqual(sensor_by_key["station_status"].native_value, "Connected")
+        self.assertEqual(sensor_by_key["connector_status"].native_value, "Connected")
+        self.assertEqual(charging_event_entity._last_triggered_event[0], const.EVENT_CABLE_PLUGGED_IN)
+
+        # 2. User presses the "Charge" button in the app/station:
+        # Station starts transaction -> StartTransactionNotification / status becomes Charging
+        await coord.async_handle_signalr_event(
+            "StartTransactionNotification",
+            [
+                {
+                    "chargePointSerialNumber": "SN-PLUG-01",
+                    "status": "Charging",
+                    "ocppStatus": "Charging",
+                    "transactionId": 555001,
+                }
+            ],
+        )
+
+        # Verify: charging_started fired, but cable_plugged_in was NOT fired again!
+        fired_types = [evt_type for evt_type, _ in hass.fired_events]
+        self.assertEqual(fired_types.count("neovac_mycharge_cable_plugged_in"), 1)
+        self.assertEqual(fired_types.count("neovac_mycharge_charging_started"), 1)
+
+        self.assertTrue(bs_by_key["cable_plugged_in"].is_on)
+        self.assertTrue(bs_by_key["charging"].is_on)
+        self.assertEqual(sensor_by_key["station_status"].native_value, "Charging")
+        self.assertEqual(charging_event_entity._last_triggered_event[0], const.EVENT_CHARGING_STARTED)
+
+        # 3. User stops charging (presses stop), but leaves cable plugged into vehicle:
+        await coord.async_handle_signalr_event(
+            "ReceiveChargePointSiteStatusUpdate",
+            [
+                {
+                    "chargePointSerialNumber": "SN-PLUG-01",
+                    "status": "Connected",
+                    "ocppStatus": "Available",
+                    "isOnline": True,
+                }
+            ],
+        )
+
+        fired_types = [evt_type for evt_type, _ in hass.fired_events]
+        self.assertIn("neovac_mycharge_charging_stopped", fired_types)
+        self.assertEqual(fired_types.count("neovac_mycharge_cable_plugged_in"), 1)
+        self.assertTrue(bs_by_key["cable_plugged_in"].is_on)
+        self.assertFalse(bs_by_key["charging"].is_on)
+        self.assertEqual(sensor_by_key["station_status"].native_value, "Connected")
+
+        # 4. User unplugs cable from vehicle:
+        await coord.async_handle_signalr_event(
+            "ReceiveChargePointSiteStatusUpdate",
+            [
+                {
+                    "chargePointSerialNumber": "SN-PLUG-01",
+                    "status": "Available",
+                    "ocppStatus": "Available",
+                    "isOnline": True,
+                }
+            ],
+        )
+
+        fired_types = [evt_type for evt_type, _ in hass.fired_events]
+        self.assertIn("neovac_mycharge_cable_unplugged", fired_types)
+        self.assertFalse(bs_by_key["cable_plugged_in"].is_on)
+        self.assertEqual(sensor_by_key["station_status"].native_value, "Available")
+        self.assertEqual(charging_event_entity._last_triggered_event[0], const.EVENT_CABLE_UNPLUGGED)
 
 
 if __name__ == "__main__":

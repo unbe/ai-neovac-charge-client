@@ -21,6 +21,7 @@ from .const import (
     PLUGGED_IN_STATUSES,
     STATUS_CHARGING,
     STATUS_FAULTED,
+    is_plugged_in_status,
 )
 from .coordinator import NeoVacDataUpdateCoordinator, _get_ci
 from .entity import NeoVacEntity
@@ -48,8 +49,9 @@ BINARY_SENSOR_DESCRIPTIONS: tuple[NeoVacBinarySensorEntityDescription, ...] = (
         name="Cable Plugged In",
         device_class=BinarySensorDeviceClass.PLUG,
         is_on_fn=lambda b: (
-            _get_ci(b.get("info", {}), "status", "connectorZeroStatus")
-            in PLUGGED_IN_STATUSES
+            is_plugged_in_status(
+                _get_ci(b.get("info", {}), "status", "connectorZeroStatus")
+            )
         ),
     ),
     NeoVacBinarySensorEntityDescription(

@@ -38,10 +38,15 @@ from .const import (
     REDIRECT_URI,
     STATUS_AVAILABLE,
     STATUS_CHARGING,
+    STATUS_CONNECTED,
     STATUS_FAULTED,
     STATUS_FINISHING,
+    STATUS_OCCUPIED,
+    STATUS_PREPARING,
     STATUS_SUSPENDED_EV,
     STATUS_SUSPENDED_EVSE,
+    canonical_status,
+    is_plugged_in_status,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -111,31 +116,45 @@ def evaluate_state_transitions(
     if previous_status is None:
         return events
 
-    was_plugged = previous_status in PLUGGED_IN_STATUSES
-    is_plugged = new_status in PLUGGED_IN_STATUSES
+    canonical_prev = canonical_status(previous_status)
+    canonical_new = canonical_status(new_status)
+
+    if canonical_prev == canonical_new:
+        if error_charging or (error_code and error_code not in ("NoError", "None", "0", "")):
+            events.append(EVENT_ERROR)
+        return events
+
+    was_plugged = is_plugged_in_status(canonical_prev)
+    is_plugged = is_plugged_in_status(canonical_new)
 
     # Cable plug / unplug transitions
     if not was_plugged and is_plugged:
         events.append(EVENT_CABLE_PLUGGED_IN)
-    elif was_plugged and not is_plugged and new_status == STATUS_AVAILABLE:
+    elif was_plugged and not is_plugged and canonical_new == STATUS_AVAILABLE:
         events.append(EVENT_CABLE_UNPLUGGED)
 
     # Charging lifecycle transitions
-    if new_status == STATUS_CHARGING:
-        if previous_status in PAUSED_STATUSES:
+    if canonical_new == STATUS_CHARGING:
+        if canonical_prev in PAUSED_STATUSES or canonical_prev.lower() in PAUSED_STATUSES:
             events.append(EVENT_CHARGING_RESUMED)
-        elif previous_status != STATUS_CHARGING:
+        elif canonical_prev != STATUS_CHARGING:
             events.append(EVENT_CHARGING_STARTED)
-    elif new_status == STATUS_SUSPENDED_EV and previous_status != STATUS_SUSPENDED_EV:
+    elif canonical_new == STATUS_SUSPENDED_EV and canonical_prev != STATUS_SUSPENDED_EV:
         events.append(EVENT_CHARGING_PAUSED_EV)
-    elif new_status == STATUS_SUSPENDED_EVSE and previous_status != STATUS_SUSPENDED_EVSE:
+    elif canonical_new == STATUS_SUSPENDED_EVSE and canonical_prev != STATUS_SUSPENDED_EVSE:
         events.append(EVENT_CHARGING_PAUSED_EVSE)
-    elif previous_status in (STATUS_CHARGING, STATUS_SUSPENDED_EV, STATUS_SUSPENDED_EVSE):
-        if new_status in (STATUS_FINISHING, STATUS_AVAILABLE):
+    elif canonical_prev in (STATUS_CHARGING, STATUS_SUSPENDED_EV, STATUS_SUSPENDED_EVSE):
+        if canonical_new in (
+            STATUS_FINISHING,
+            STATUS_AVAILABLE,
+            STATUS_CONNECTED,
+            STATUS_OCCUPIED,
+            STATUS_PREPARING,
+        ):
             events.append(EVENT_CHARGING_STOPPED)
 
     if (
-        new_status == STATUS_FAULTED
+        canonical_new == STATUS_FAULTED
         or error_charging
         or (error_code and error_code not in ("NoError", "None", "0", ""))
     ):

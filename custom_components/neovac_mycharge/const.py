@@ -39,6 +39,8 @@ RECORD_SEPARATOR = "\x1e"
 
 # OCPP & Station Status Values
 STATUS_AVAILABLE = "Available"
+STATUS_CONNECTED = "Connected"
+STATUS_OCCUPIED = "Occupied"
 STATUS_PREPARING = "Preparing"
 STATUS_CHARGING = "Charging"
 STATUS_SUSPENDED_EV = "SuspendedEV"
@@ -51,6 +53,8 @@ STATUS_UNKNOWN = "Unknown"
 
 ALL_STATION_STATUSES = [
     STATUS_AVAILABLE,
+    STATUS_CONNECTED,
+    STATUS_OCCUPIED,
     STATUS_PREPARING,
     STATUS_CHARGING,
     STATUS_SUSPENDED_EV,
@@ -63,17 +67,68 @@ ALL_STATION_STATUSES = [
 ]
 
 PLUGGED_IN_STATUSES = {
+    STATUS_CONNECTED,
+    STATUS_OCCUPIED,
     STATUS_PREPARING,
     STATUS_CHARGING,
     STATUS_SUSPENDED_EV,
     STATUS_SUSPENDED_EVSE,
     STATUS_FINISHING,
+    "connected",
+    "occupied",
+    "preparing",
+    "charging",
+    "suspendedev",
+    "suspendedevse",
+    "finishing",
 }
 
 PAUSED_STATUSES = {
     STATUS_SUSPENDED_EV,
     STATUS_SUSPENDED_EVSE,
+    "suspendedev",
+    "suspendedevse",
 }
+
+STATUS_MAP = {s.casefold(): s for s in ALL_STATION_STATUSES}
+
+STATUS_PRIORITY: dict[str, int] = {
+    STATUS_FAULTED: 100,
+    STATUS_CHARGING: 90,
+    STATUS_SUSPENDED_EV: 80,
+    STATUS_SUSPENDED_EVSE: 80,
+    STATUS_FINISHING: 70,
+    STATUS_PREPARING: 60,
+    STATUS_CONNECTED: 50,
+    STATUS_OCCUPIED: 50,
+    STATUS_RESERVED: 40,
+    STATUS_UNAVAILABLE: 30,
+    STATUS_AVAILABLE: 20,
+    STATUS_UNKNOWN: 10,
+}
+
+
+def canonical_status(status: str | None) -> str:
+    """Returns canonical case status from ALL_STATION_STATUSES or STATUS_UNKNOWN."""
+    if not status or not isinstance(status, str):
+        return STATUS_UNKNOWN
+    return STATUS_MAP.get(status.strip().casefold(), status.strip())
+
+
+def is_plugged_in_status(status: str | None) -> bool:
+    """Returns True if the given status string represents a plugged-in state."""
+    if not status or not isinstance(status, str):
+        return False
+    return status.strip().casefold() in {s.casefold() for s in PLUGGED_IN_STATUSES}
+
+
+def resolve_best_status(*candidates: str | None) -> str | None:
+    """Select the most specific status from multiple status candidates (e.g. status vs ocppStatus)."""
+    valid = [c for c in candidates if c and isinstance(c, str)]
+    if not valid:
+        return None
+    best = max(valid, key=lambda s: STATUS_PRIORITY.get(canonical_status(s), 0))
+    return canonical_status(best)
 
 # Event Bus & EventEntity Types
 EVENT_BUS_NAME = f"{DOMAIN}_event"
