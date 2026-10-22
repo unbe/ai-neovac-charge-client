@@ -499,28 +499,13 @@ class TestNeoVacIntegration(unittest.IsolatedAsyncioTestCase):
             [const.EVENT_ERROR],
         )
 
-        # Priority resolution tests (resolve_best_status)
-        self.assertEqual(
-            const.resolve_best_status("Connected", "Available"),
-            "Connected",
-        )
-        self.assertEqual(
-            const.resolve_best_status("Connected", "SuspendedEV"),
-            "SuspendedEV",
-        )
-        self.assertEqual(
-            const.resolve_best_status("Connected", "Charging"),
-            "Charging",
-        )
-        self.assertEqual(
-            const.resolve_best_status("Available", "Faulted"),
-            "Faulted",
-        )
-        self.assertEqual(
-            const.resolve_best_status("connected", None),
-            "Connected",
-        )
-        self.assertIsNone(const.resolve_best_status(None, None))
+        # Status helpers test
+        self.assertEqual(const.canonical_status("connected"), "Connected")
+        self.assertEqual(const.canonical_status("Available"), "Available")
+        self.assertTrue(const.is_plugged_in_status("Connected"))
+        self.assertTrue(const.is_plugged_in_status("Preparing"))
+        self.assertTrue(const.is_plugged_in_status("Charging"))
+        self.assertFalse(const.is_plugged_in_status("Available"))
 
     async def test_api_coordinator_and_entities_end_to_end(self) -> None:
         """End-to-end test with mock HTTP REST + SignalR WebSocket server."""
@@ -1441,6 +1426,7 @@ class TestNeoVacIntegration(unittest.IsolatedAsyncioTestCase):
             charge_point_ids: Any = None,
             stop_event: Any = None,
             on_connected: Any = None,
+            **kwargs: Any,
         ) -> None:
             nonlocal call_count
             call_count += 1
@@ -1862,8 +1848,8 @@ class TestNeoVacIntegration(unittest.IsolatedAsyncioTestCase):
                     {
                         "chargePointSerialNo": "SN-PLUG-01",
                         "connectorId": 1,
-                        "status": "Connected",
-                        "ocppStatus": "Available",
+                        "status": "Preparing",
+                        "ocppStatus": "Preparing",
                         "isOnline": True,
                     }
                 ]
@@ -1879,8 +1865,8 @@ class TestNeoVacIntegration(unittest.IsolatedAsyncioTestCase):
         # Verify entities reflect plugged in state
         self.assertTrue(bs_by_key["cable_plugged_in"].is_on)
         self.assertFalse(bs_by_key["charging"].is_on)
-        self.assertEqual(sensor_by_key["station_status"].native_value, "Connected")
-        self.assertEqual(sensor_by_key["connector_status"].native_value, "Connected")
+        self.assertEqual(sensor_by_key["station_status"].native_value, "Preparing")
+        self.assertEqual(sensor_by_key["connector_status"].native_value, "Preparing")
         self.assertEqual(charging_event_entity._last_triggered_event[0], const.EVENT_CABLE_PLUGGED_IN)
 
         # 2. User presses the "Charge" button in the app/station:
@@ -1913,8 +1899,8 @@ class TestNeoVacIntegration(unittest.IsolatedAsyncioTestCase):
             [
                 {
                     "chargePointSerialNumber": "SN-PLUG-01",
-                    "status": "Connected",
-                    "ocppStatus": "Available",
+                    "status": "Preparing",
+                    "ocppStatus": "Preparing",
                     "isOnline": True,
                 }
             ],
@@ -1925,7 +1911,7 @@ class TestNeoVacIntegration(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(fired_types.count("neovac_mycharge_cable_plugged_in"), 1)
         self.assertTrue(bs_by_key["cable_plugged_in"].is_on)
         self.assertFalse(bs_by_key["charging"].is_on)
-        self.assertEqual(sensor_by_key["station_status"].native_value, "Connected")
+        self.assertEqual(sensor_by_key["station_status"].native_value, "Preparing")
 
         # 4. User unplugs cable from vehicle:
         await coord.async_handle_signalr_event(

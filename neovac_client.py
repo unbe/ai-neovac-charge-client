@@ -691,13 +691,14 @@ class NeoVacClient:
                     except json.JSONDecodeError:
                         pass
 
-            # Step 3: Subscription
+            # Step 3: Subscription matching official app
             if hub_name == "connector":
                 sub_target = "JoinConnectorAsync"
-                sub_args: list[Any] = [self.default_charge_point_id, 1]
+                sub_args: list[Any] = [self.default_charge_point_id]
             else:
-                sub_target = "SubscribeToTransactionsFromAllSites"
-                sub_args = []
+                site_id = getattr(self, "default_site_id", None) or ""
+                sub_target = "JoinChargePointSiteAsync"
+                sub_args = [str(site_id)] if site_id else []
 
             sub_msg = (
                 json.dumps({
@@ -783,13 +784,14 @@ class NeoVacClient:
             with urllib.request.urlopen(post_req) as resp:
                 _ = resp.read()
 
-            # Step 2: Subscription
+            # Step 2: Subscription matching official app
             if hub_name == "connector":
                 sub_target = "JoinConnectorAsync"
-                sub_args: list[Any] = [self.default_charge_point_id, 1]
+                sub_args: list[Any] = [self.default_charge_point_id]
             else:
-                sub_target = "SubscribeToTransactionsFromAllSites"
-                sub_args = []
+                site_id = getattr(self, "default_site_id", None) or ""
+                sub_target = "JoinChargePointSiteAsync"
+                sub_args = [str(site_id)] if site_id else []
 
             sub_msg = (
                 json.dumps({

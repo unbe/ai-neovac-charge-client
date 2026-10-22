@@ -703,15 +703,15 @@ class NeoVacAsyncClient:
         hub_name: str,
         event_callback: Callable[[str, list[Any]], Awaitable[None] | None],
         charge_point_ids: list[int] | None = None,
+        sites: list[dict[str, Any]] | None = None,
         stop_event: asyncio.Event | None = None,
         on_connected: Callable[[], Awaitable[None] | None] | None = None,
     ) -> None:
         """Connects to a SignalR hub via WebSocket and dispatches incoming events.
 
-        Automatically sends the SignalR JSON v1 handshake, subscribes to either
-        `SubscribeToTransactionsFromAllSites` (on `events` hub) or
-        `JoinConnectorAsync(cp_id, 1)` (on `connector` hub), handles keepalive pings,
-        and detects broken connections with WebSocket heartbeat (55s).
+        Subscribes to server groups matching the official mobile app:
+        - `events` hub: `JoinChargePointSiteAsync(siteId)` and `JoinConnectorAsync(siteId, serial, conn)`
+        - `connector` hub: `JoinConnectorAsync(cp_id)`
         """
         neg_data = await self.async_negotiate_signalr(hub_name)
         if not isinstance(neg_data, dict):
@@ -790,26 +790,40 @@ class NeoVacAsyncClient:
                                 method="WS",
                             )
 
-            # 2. Subscribe to hub streams
+            # 2. Subscribe to hub streams matching official mobile app
             if hub_name == HUB_CONNECTOR and charge_point_ids:
                 for cp_id in charge_point_ids:
                     sub_payload = {
                         "type": 1,
                         "target": "JoinConnectorAsync",
-                        "arguments": [int(cp_id), 1],
+                        "arguments": [int(cp_id)],
                     }
                     await ws.send_str(json.dumps(sub_payload) + RECORD_SEPARATOR)
             elif hub_name == HUB_EVENTS:
-                for sub_target in (
-                    "SubscribeToTransactionsFromAllSites",
-                    "SubscribeToStatusFromAllSites",
-                ):
-                    sub_payload = {
-                        "type": 1,
-                        "target": sub_target,
-                        "arguments": [],
-                    }
-                    await ws.send_str(json.dumps(sub_payload) + RECORD_SEPARATOR)
+                # WebsocketBackendService subscribes to each site and connector
+                for site in (sites or []):
+                    site_id = site.get("siteId") or site.get("id")
+                    if site_id:
+                        await ws.send_str(
+                            json.dumps({
+                                "type": 1,
+                                "target": "JoinChargePointSiteAsync",
+                                "arguments": [str(site_id)],
+                            })
+                            + RECORD_SEPARATOR
+                        )
+                    for cp in site.get("userChargePoints", []) or []:
+                        serial = cp.get("serialNumber") or cp.get("chargePointSerialNumber") or cp.get("chargePointSerialNo")
+                        conn_num = int(cp.get("connectorNumber", 1) or 1)
+                        if site_id and serial:
+                            await ws.send_str(
+                                json.dumps({
+                                    "type": 1,
+                                    "target": "JoinConnectorAsync",
+                                    "arguments": [str(site_id), str(serial), conn_num],
+                                })
+                                + RECORD_SEPARATOR
+                            )
 
             # Notify caller that connection and subscriptions succeeded
             if on_connected:

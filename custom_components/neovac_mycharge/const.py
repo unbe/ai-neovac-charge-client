@@ -92,21 +92,6 @@ PAUSED_STATUSES = {
 
 STATUS_MAP = {s.casefold(): s for s in ALL_STATION_STATUSES}
 
-STATUS_PRIORITY: dict[str, int] = {
-    STATUS_FAULTED: 100,
-    STATUS_CHARGING: 90,
-    STATUS_SUSPENDED_EV: 80,
-    STATUS_SUSPENDED_EVSE: 80,
-    STATUS_FINISHING: 70,
-    STATUS_PREPARING: 60,
-    STATUS_CONNECTED: 50,
-    STATUS_OCCUPIED: 50,
-    STATUS_RESERVED: 40,
-    STATUS_UNAVAILABLE: 30,
-    STATUS_AVAILABLE: 20,
-    STATUS_UNKNOWN: 10,
-}
-
 
 def canonical_status(status: str | None) -> str:
     """Returns canonical case status from ALL_STATION_STATUSES or STATUS_UNKNOWN."""
@@ -120,15 +105,6 @@ def is_plugged_in_status(status: str | None) -> bool:
     if not status or not isinstance(status, str):
         return False
     return status.strip().casefold() in {s.casefold() for s in PLUGGED_IN_STATUSES}
-
-
-def resolve_best_status(*candidates: str | None) -> str | None:
-    """Select the most specific status from multiple status candidates (e.g. status vs ocppStatus)."""
-    valid = [c for c in candidates if c and isinstance(c, str)]
-    if not valid:
-        return None
-    best = max(valid, key=lambda s: STATUS_PRIORITY.get(canonical_status(s), 0))
-    return canonical_status(best)
 
 # Event Bus & EventEntity Types
 EVENT_BUS_NAME = f"{DOMAIN}_event"

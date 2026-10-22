@@ -37,7 +37,6 @@ from .const import (
     STATUS_CHARGING,
     STATUS_FINISHING,
     canonical_status,
-    resolve_best_status,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -61,11 +60,9 @@ def _get_ci(data: dict[str, Any], *keys: str, default: Any = None) -> Any:
 
 
 def _extract_station_status(data: dict[str, Any]) -> str | None:
-    """Extracts and resolves the best station status from payload fields."""
-    st = _get_ci(data, "status")
-    ocpp = _get_ci(data, "ocppStatus", "connectorState", "statusUpdate")
-    conn_zero = _get_ci(data, "connectorZeroStatus")
-    return resolve_best_status(st, ocpp, conn_zero)
+    """Extracts station status directly from API payload without artificial synthesizing."""
+    raw = _get_ci(data, "ocppStatus", "status", "connectorZeroStatus", "connectorState", "statusUpdate")
+    return canonical_status(raw) if raw else None
 
 
 class NeoVacDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
@@ -362,6 +359,7 @@ class NeoVacDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 self.hass.async_create_task(self.async_request_refresh())
             was_connected_before = True
 
+        sites = self.data.get("user_info", {}).get("sites", []) if self.data else []
         while not self._stop_event.is_set():
             connected_at = time.monotonic()
             try:
@@ -369,6 +367,7 @@ class NeoVacDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     hub_name=hub_name,
                     event_callback=self.async_handle_signalr_event,
                     charge_point_ids=charge_point_ids,
+                    sites=sites,
                     stop_event=self._stop_event,
                     on_connected=_on_connected,
                 )
