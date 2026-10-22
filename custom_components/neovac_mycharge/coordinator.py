@@ -480,8 +480,23 @@ class NeoVacDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     _LOGGER.warning("Failed to refresh notification settings: %s", err)
                 return
 
-            if target in ("SiteNameChanged", "SitesChanged", "ChargePointAddedMobileDto", "ChargePointDeleteMobileDto"):
+            if target in (
+                "AddChargePoint",
+                "RemoveChargePoint",
+                "UserDefinedNameChanged",
+                "SiteNameChanged",
+                "SitesChanged",
+            ):
                 _LOGGER.info("Received %s SignalR event, requesting coordinator refresh", target)
+                if target == "UserDefinedNameChanged" and arguments and isinstance(arguments[0], dict):
+                    arg = arguments[0]
+                    raw_id = _get_ci(arg, "chargePointId", "id")
+                    new_name = _get_ci(arg, "name", "userDefinedName", "newName", "chargePointName")
+                    if raw_id is not None and new_name:
+                        cp_id = int(raw_id)
+                        if cp_id in self.data.get("charge_points", {}):
+                            self.data["charge_points"][cp_id]["info"]["userDefinedName"] = str(new_name)
+                            self.async_set_updated_data(self.data)
                 self.hass.async_create_task(self.async_request_refresh())
                 return
 
