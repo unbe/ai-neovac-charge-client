@@ -1862,18 +1862,25 @@ class TestNeoVacIntegration(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(hass.fired_events), 0)
 
         # 1. User plugs in cable to station:
-        # NeoVac sends ReceiveChargePointSiteStatusFullUpdate with status='Connected', ocppStatus='Available'
+        # NeoVac sends ReceiveChargePointSiteStatusFullUpdate with status='Connected', ocppStatus='Preparing'
         await coord.async_handle_signalr_event(
             "ReceiveChargePointSiteStatusFullUpdate",
             [
                 [
                     {
                         "chargePointSerialNo": "SN-PLUG-01",
+                        "connectorId": 0,
+                        "status": "Preparing",
+                        "ocppStatus": "Preparing",
+                        "isOnline": True,
+                    },
+                    {
+                        "chargePointSerialNo": "SN-PLUG-01",
                         "connectorId": 1,
                         "status": "Preparing",
                         "ocppStatus": "Preparing",
                         "isOnline": True,
-                    }
+                    },
                 ]
             ],
         )
@@ -1919,12 +1926,22 @@ class TestNeoVacIntegration(unittest.IsolatedAsyncioTestCase):
         await coord.async_handle_signalr_event(
             "ReceiveChargePointSiteStatusUpdate",
             [
-                {
-                    "chargePointSerialNumber": "SN-PLUG-01",
-                    "status": "Preparing",
-                    "ocppStatus": "Preparing",
-                    "isOnline": True,
-                }
+                [
+                    {
+                        "chargePointSerialNo": "SN-PLUG-01",
+                        "connectorId": 0,
+                        "status": "Preparing",
+                        "ocppStatus": "Preparing",
+                        "isOnline": True,
+                    },
+                    {
+                        "chargePointSerialNo": "SN-PLUG-01",
+                        "connectorId": 1,
+                        "status": "Preparing",
+                        "ocppStatus": "Preparing",
+                        "isOnline": True,
+                    },
+                ]
             ],
         )
 
@@ -1939,12 +1956,22 @@ class TestNeoVacIntegration(unittest.IsolatedAsyncioTestCase):
         await coord.async_handle_signalr_event(
             "ReceiveChargePointSiteStatusUpdate",
             [
-                {
-                    "chargePointSerialNumber": "SN-PLUG-01",
-                    "status": "Available",
-                    "ocppStatus": "Available",
-                    "isOnline": True,
-                }
+                [
+                    {
+                        "chargePointSerialNo": "SN-PLUG-01",
+                        "connectorId": 0,
+                        "status": "Available",
+                        "ocppStatus": "Available",
+                        "isOnline": True,
+                    },
+                    {
+                        "chargePointSerialNo": "SN-PLUG-01",
+                        "connectorId": 1,
+                        "status": "Available",
+                        "ocppStatus": "Available",
+                        "isOnline": True,
+                    },
+                ]
             ],
         )
 

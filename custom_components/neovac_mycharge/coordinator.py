@@ -555,10 +555,9 @@ class NeoVacDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 for item in items:
                     if not isinstance(item, dict):
                         continue
-                    serial = item.get("chargePointSerialNo") or item.get("chargePointSerialNumber") or item.get("serialNumber")
-                    raw_id = item.get("chargePointId")
-                    target_cp_id = int(raw_id) if raw_id is not None else None
-                    if target_cp_id is None and serial:
+                    serial = item.get("chargePointSerialNo")
+                    target_cp_id: int | None = None
+                    if serial:
                         for cid, cb in charge_points.items():
                             if cb.get("info", {}).get("serialNumber") == serial:
                                 target_cp_id = cid
@@ -588,7 +587,6 @@ class NeoVacDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                                 cb_info["connectorZeroStatus"] = new_st
                             else:
                                 cb_info["status"] = new_st
-                                cb_info["connectorZeroStatus"] = new_st
                                 self._check_and_emit_status_transitions(
                                     target_cp_id,
                                     new_st,
