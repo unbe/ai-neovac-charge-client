@@ -926,11 +926,11 @@ class NeoVacAsyncClient:
                         if msg_type == 1:  # Invocation
                             target = payload.get("target", "")
                             args = payload.get("arguments", [])
-                            _LOGGER.debug(
-                                "SignalR hub '%s' received invocation: target='%s', args_count=%d",
+                            _LOGGER.info(
+                                "SignalR hub '%s' received invocation: target='%s', arguments=%s",
                                 hub_name,
                                 target,
-                                len(args),
+                                args,
                             )
                             try:
                                 res = event_callback(target, args)

@@ -475,6 +475,7 @@ class NeoVacDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self, target: str, arguments: list[Any]
     ) -> None:
         """Processes incoming real-time SignalR invocation messages."""
+        _LOGGER.info("SignalR event received: target='%s', arguments=%s", target, arguments)
         if not self.data:
             return
 
@@ -539,24 +540,27 @@ class NeoVacDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
             if not arguments:
                 return
-            first_arg = arguments[0] if isinstance(arguments[0], dict) else {}
+            first_arg = arguments[0] if (arguments and isinstance(arguments[0], dict)) else {}
             charge_points = self.data.get("charge_points", {})
             if not charge_points:
                 return
 
-            # Special case: ReceiveChargePointSiteStatusFullUpdate sends a list of connectors in arguments[0]
-            if target == "ReceiveChargePointSiteStatusFullUpdate" and arguments and isinstance(arguments[0], list):
-                for item in arguments[0]:
+            # Both ReceiveChargePointSiteStatusUpdate and ReceiveChargePointSiteStatusFullUpdate
+            # pass ConnectorState[] from the backend.
+            if target in (
+                "ReceiveChargePointSiteStatusUpdate",
+                "ReceiveChargePointSiteStatusFullUpdate",
+            ):
+                items = arguments[0] if (arguments and isinstance(arguments[0], list)) else arguments
+                for item in items:
                     if not isinstance(item, dict):
                         continue
-                    serial = _get_ci(
-                        item, "chargePointSerialNo", "chargePointSerialNumber", "serialNumber"
-                    )
-                    raw_id = _get_ci(item, "chargePointId")
+                    serial = item.get("chargePointSerialNo") or item.get("chargePointSerialNumber") or item.get("serialNumber")
+                    raw_id = item.get("chargePointId")
                     target_cp_id = int(raw_id) if raw_id is not None else None
                     if target_cp_id is None and serial:
                         for cid, cb in charge_points.items():
-                            if _get_ci(cb.get("info", {}), "serialNumber") == serial:
+                            if cb.get("info", {}).get("serialNumber") == serial:
                                 target_cp_id = cid
                                 break
                     if target_cp_id is None and len(charge_points) == 1:
@@ -564,11 +568,21 @@ class NeoVacDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
                     if target_cp_id and target_cp_id in charge_points:
                         cb_info = charge_points[target_cp_id]["info"]
-                        is_online = _get_ci(item, "isOnline")
+                        is_online = item.get("isOnline")
                         if is_online is not None:
                             cb_info["isOnline"] = bool(is_online)
                         conn_id = item.get("connectorId")
                         new_st = _extract_station_status(item)
+                        _LOGGER.info(
+                            "SignalR '%s' for station %s (connectorId=%s, serial=%s): status='%s' (prev_status='%s', prev_connectorZero='%s')",
+                            target,
+                            target_cp_id,
+                            conn_id,
+                            serial,
+                            new_st,
+                            cb_info.get("status"),
+                            cb_info.get("connectorZeroStatus"),
+                        )
                         if new_st:
                             if conn_id == 0:
                                 cb_info["connectorZeroStatus"] = new_st
@@ -671,7 +685,6 @@ class NeoVacDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 self.async_set_updated_data(self.data)
 
             elif target in (
-                "ReceiveChargePointSiteStatusUpdate",
                 "ConnectorChanged",
                 "StatusNotificationReceivedIntegrationEvent",
             ):
@@ -680,6 +693,12 @@ class NeoVacDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 is_online = first_arg.get("isOnline")
                 if is_online is not None:
                     cp_info["isOnline"] = bool(is_online)
+                neovac_id = _get_ci(first_arg, "neoVacId")
+                if neovac_id:
+                    cp_info["neoVacId"] = str(neovac_id)
+                pos = _get_ci(first_arg, "position")
+                if pos:
+                    cp_info["position"] = str(pos)
 
                 _LOGGER.info(
                     "SignalR '%s' for station %s (connectorId=%s): status='%s' (prev_status='%s', prev_connectorZero='%s')",
@@ -697,10 +716,10 @@ class NeoVacDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     else:
                         cp_info["status"] = new_status
 
-                if conn_id != 0:
+                if conn_id != 0 and new_status:
                     self._check_and_emit_status_transitions(
                         cp_id,
-                        new_status or cp_info.get("status"),
+                        new_status,
                         error_code=first_arg.get("errorCode"),
                         error_charging=bool(first_arg.get("errorCharging", False)),
                         extra=first_arg,
