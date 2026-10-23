@@ -32,6 +32,7 @@ from .const import (
     EVENT_CHARGING_STOPPED,
     EVENT_PRICE_UPDATED,
     EVENT_SETTINGS_CHANGED,
+    FALLBACK_SCAN_INTERVAL,
     HUB_CONNECTOR,
     HUB_EVENTS,
     STATUS_CHARGING,
@@ -84,12 +85,14 @@ class NeoVacDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             CONF_ENABLE_WEBSOCKET,
             entry.data.get(CONF_ENABLE_WEBSOCKET, True),
         )
+        self._base_scan_interval: int = int(scan_seconds)
+        self._connected_hubs: set[str] = set()
 
         super().__init__(
             hass,
             _LOGGER,
             name=DOMAIN,
-            update_interval=timedelta(seconds=int(scan_seconds)),
+            update_interval=timedelta(seconds=self._base_scan_interval),
         )
 
         self._stop_event = asyncio.Event()
@@ -99,6 +102,23 @@ class NeoVacDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self.selected_rfid_tags: dict[int, str | None] = {}
         self._live_transactions: dict[int, dict[str, Any]] = {}
         self._sites: list[dict[str, Any]] = []
+
+    @callback
+    def _set_poll_interval(self, seconds: int) -> None:
+        """Dynamically adjusts the coordinator polling interval based on WebSocket health."""
+        new_interval = timedelta(seconds=seconds)
+        if self.update_interval != new_interval:
+            _LOGGER.info(
+                "Coordinator polling interval adjusted to %ds (WebSocket %s)",
+                seconds,
+                "connected" if seconds == self._base_scan_interval else "disconnected",
+            )
+            self.update_interval = new_interval
+            if hasattr(self, "_unsub_refresh") and self._unsub_refresh:
+                self._unsub_refresh()
+                self._unsub_refresh = None
+            if hasattr(self, "_schedule_refresh"):
+                self._schedule_refresh()
 
     def register_event_listener(
         self,
@@ -348,6 +368,8 @@ class NeoVacDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if self._ws_tasks:
             await asyncio.gather(*self._ws_tasks, return_exceptions=True)
         self._ws_tasks.clear()
+        self._connected_hubs.clear()
+        self._set_poll_interval(FALLBACK_SCAN_INTERVAL)
 
     async def _async_hub_loop(
         self, hub_name: str, charge_point_ids: list[int]
@@ -362,6 +384,9 @@ class NeoVacDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         def _on_connected() -> None:
             nonlocal was_connected_before, backoff, consecutive_failures
             _LOGGER.info("SignalR hub '%s' connected successfully", hub_name)
+            self._connected_hubs.add(hub_name)
+            if HUB_EVENTS in self._connected_hubs:
+                self._set_poll_interval(self._base_scan_interval)
             # If reconnecting after an outage, synchronize coordinator data with REST
             if was_connected_before:
                 self.hass.async_create_task(self.async_request_refresh())
@@ -426,6 +451,10 @@ class NeoVacDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     consecutive_failures,
                     max_backoff,
                 )
+            finally:
+                self._connected_hubs.discard(hub_name)
+                if HUB_EVENTS not in self._connected_hubs and not self._stop_event.is_set():
+                    self._set_poll_interval(FALLBACK_SCAN_INTERVAL)
 
             # If connection was active and stable for >=30 seconds, reset backoff
             duration = time.monotonic() - connected_at

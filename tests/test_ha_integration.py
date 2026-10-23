@@ -1954,6 +1954,72 @@ class TestNeoVacIntegration(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(sensor_by_key["station_status"].native_value, "Available")
         self.assertEqual(charging_event_entity._last_triggered_event[0], const.EVENT_CABLE_UNPLUGGED)
 
+    async def test_adaptive_polling_fallback_on_websocket_disconnect(self) -> None:
+        """Verify dynamic scan interval: 59s when WebSocket drops, restored to 15m (or configured) on reconnect."""
+        _install_ha_stubs()
+        from datetime import timedelta
+        from unittest.mock import AsyncMock, MagicMock, patch
+        from custom_components.neovac_mycharge import coordinator, const
+        from custom_components.neovac_mycharge.api import NeoVacConnectionError
+
+        hass = sys.modules["homeassistant.core"].HomeAssistant()
+        entry = sys.modules["homeassistant.config_entries"].ConfigEntry(
+            data={
+                const.CONF_ENABLE_WEBSOCKET: True,
+                const.CONF_SCAN_INTERVAL: 900,
+            }
+        )
+        client = MagicMock()
+        coord = coordinator.NeoVacDataUpdateCoordinator(hass, entry, client)
+        coord.async_request_refresh = AsyncMock()
+
+        # Initially, interval is the base interval (900s)
+        self.assertEqual(coord.update_interval, timedelta(seconds=900))
+        self.assertEqual(coord._base_scan_interval, 900)
+
+        # Simulate stop / disconnect
+        await coord.async_stop_websocket_listeners()
+        self.assertEqual(coord.update_interval, timedelta(seconds=const.FALLBACK_SCAN_INTERVAL))
+        self.assertEqual(coord.update_interval, timedelta(seconds=59))
+
+        # Test hub loop connect and disconnect transitions
+        coord._stop_event.clear()
+        attempt = 0
+
+        async def mock_stream_signalr_hub(
+            hub_name: str,
+            event_callback: Any,
+            charge_point_ids: Any = None,
+            stop_event: Any = None,
+            on_connected: Any = None,
+            **kwargs: Any,
+        ) -> None:
+            nonlocal attempt
+            attempt += 1
+            if attempt == 1:
+                # Connected -> interval should restore to 900s
+                if on_connected:
+                    on_connected()
+                self.assertEqual(coord.update_interval, timedelta(seconds=900))
+                # Now connection drops
+                raise NeoVacConnectionError("WebSocket dropped")
+            elif attempt == 2:
+                # Before reconnecting, verify the interval was set to fallback 59s upon disconnect
+                self.assertEqual(coord.update_interval, timedelta(seconds=59))
+                # Reconnected -> interval restored to 900s
+                if on_connected:
+                    on_connected()
+                self.assertEqual(coord.update_interval, timedelta(seconds=900))
+                coord._stop_event.set()
+
+        client.async_stream_signalr_hub = mock_stream_signalr_hub
+
+        with patch("asyncio.sleep", return_value=None):
+            await coord._async_hub_loop(const.HUB_EVENTS, [1001])
+
+        # Verify interval was adjusted to 59s after drop and then 900s on reconnect
+        self.assertEqual(attempt, 2)
+
 
 if __name__ == "__main__":
     unittest.main()

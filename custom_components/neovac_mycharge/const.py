@@ -29,6 +29,7 @@ AUTH_METHOD_PKCE = "pkce"
 AUTH_METHOD_TOKEN = "token"
 
 DEFAULT_SCAN_INTERVAL = 900  # seconds (15 minutes)
+FALLBACK_SCAN_INTERVAL = 59  # seconds (active when WebSocket connection is dropped)
 DEFAULT_REPORT_DAYS = 30
 UPDATE_INTERVAL = timedelta(seconds=DEFAULT_SCAN_INTERVAL)
 
