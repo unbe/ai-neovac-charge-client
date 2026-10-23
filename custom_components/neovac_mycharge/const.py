@@ -28,7 +28,7 @@ CONF_REDIRECT_URL = "redirect_url"
 AUTH_METHOD_PKCE = "pkce"
 AUTH_METHOD_TOKEN = "token"
 
-DEFAULT_SCAN_INTERVAL = 900  # seconds (15 minutes)
+DEFAULT_SCAN_INTERVAL = 60  # seconds (1 minute fallback polling)
 DEFAULT_REPORT_DAYS = 30
 UPDATE_INTERVAL = timedelta(seconds=DEFAULT_SCAN_INTERVAL)
 

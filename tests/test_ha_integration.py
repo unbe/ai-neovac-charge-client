@@ -899,6 +899,22 @@ class TestNeoVacIntegration(unittest.IsolatedAsyncioTestCase):
                 )
                 self.assertEqual(sensor_by_key["station_status"].native_value, "SuspendedEV")
 
+                # Verify connectorId: 0 (station hardware) does NOT overwrite connector 1 status:
+                await coord.async_handle_signalr_event(
+                    "ConnectorChanged",
+                    [
+                        {
+                            "chargePointSerialNumber": "SN-TEST-01",
+                            "connectorId": 0,
+                            "status": "SuspendedEVSE",
+                            "ocppStatus": "SuspendedEVSE",
+                        }
+                    ],
+                )
+                # Station status (connector 1) remains SuspendedEV, connector_status reflects SuspendedEVSE
+                self.assertEqual(sensor_by_key["station_status"].native_value, "SuspendedEV")
+                self.assertEqual(sensor_by_key["connector_status"].native_value, "SuspendedEVSE")
+
                 # Test UpdateRfid SignalR event updates registered RFIDs and select options without restart
                 self.assertEqual(sensor_by_key["registered_rfids"].native_value, 1)
                 state["rfids"].append({"id": 2, "rfidName": "Secondary Card", "rfidTag": "04EEFF0011"})

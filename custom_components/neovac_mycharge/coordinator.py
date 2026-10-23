@@ -98,6 +98,7 @@ class NeoVacDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._previous_statuses: dict[int, str] = {}
         self.selected_rfid_tags: dict[int, str | None] = {}
         self._live_transactions: dict[int, dict[str, Any]] = {}
+        self._sites: list[dict[str, Any]] = []
 
     def register_event_listener(
         self,
@@ -297,9 +298,10 @@ class NeoVacDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     "last_event": existing_cp.get("last_event"),
                 }
 
-        # Ensure background SignalR WebSocket tasks are running if enabled
+        # Store latest sites and ensure background SignalR WebSocket tasks are running
+        self._sites = sites
         if self.enable_websocket and charge_points:
-            self.async_start_websocket_listeners(list(charge_points.keys()))
+            self.async_start_websocket_listeners(list(charge_points.keys()), sites=sites)
 
         return {
             "account_id": _get_ci(user_info, "accountId", default=""),
@@ -315,8 +317,14 @@ class NeoVacDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     # -------------------------------------------------------------------------
 
     @callback
-    def async_start_websocket_listeners(self, charge_point_ids: list[int]) -> None:
+    def async_start_websocket_listeners(
+        self,
+        charge_point_ids: list[int],
+        sites: list[dict[str, Any]] | None = None,
+    ) -> None:
         """Starts background SignalR WebSocket tasks for StatusHub and ConnectorHub with auto-healing."""
+        if sites:
+            self._sites = sites
         # Prune finished tasks
         self._ws_tasks = [t for t in self._ws_tasks if not t.done()]
         running_hubs = {t.get_name().replace("neovac_signalr_", "") for t in self._ws_tasks}
@@ -359,15 +367,15 @@ class NeoVacDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 self.hass.async_create_task(self.async_request_refresh())
             was_connected_before = True
 
-        sites = self.data.get("user_info", {}).get("sites", []) if self.data else []
         while not self._stop_event.is_set():
             connected_at = time.monotonic()
+            current_sites = self._sites or (self.data.get("user_info", {}).get("sites", []) if self.data else [])
             try:
                 await self.client.async_stream_signalr_hub(
                     hub_name=hub_name,
                     event_callback=self.async_handle_signalr_event,
                     charge_point_ids=charge_point_ids,
-                    sites=sites,
+                    sites=current_sites,
                     stop_event=self._stop_event,
                     on_connected=_on_connected,
                 )
@@ -530,17 +538,20 @@ class NeoVacDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                         is_online = _get_ci(item, "isOnline")
                         if is_online is not None:
                             cb_info["isOnline"] = bool(is_online)
-                        conn_id = _get_ci(item, "connectorId")
+                        conn_id = item.get("connectorId")
                         new_st = _extract_station_status(item)
-                        if (conn_id == 1 or conn_id is None) and new_st:
-                            cb_info["status"] = new_st
-                            cb_info["connectorZeroStatus"] = new_st
-                            self._check_and_emit_status_transitions(
-                                target_cp_id,
-                                new_st,
-                                error_code=_get_ci(item, "errorCode"),
-                                extra=item,
-                            )
+                        if new_st:
+                            if conn_id == 0:
+                                cb_info["connectorZeroStatus"] = new_st
+                            else:
+                                cb_info["status"] = new_st
+                                cb_info["connectorZeroStatus"] = new_st
+                                self._check_and_emit_status_transitions(
+                                    target_cp_id,
+                                    new_st,
+                                    error_code=item.get("errorCode"),
+                                    extra=item,
+                                )
                 self.async_set_updated_data(self.data)
                 return
 
@@ -636,20 +647,35 @@ class NeoVacDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 "StatusNotificationReceivedIntegrationEvent",
             ):
                 new_status = _extract_station_status(first_arg)
-                if new_status:
-                    cp_info["status"] = new_status
-                    cp_info["connectorZeroStatus"] = new_status
-                is_online = _get_ci(first_arg, "isOnline")
+                conn_id = first_arg.get("connectorId")
+                is_online = first_arg.get("isOnline")
                 if is_online is not None:
                     cp_info["isOnline"] = bool(is_online)
 
-                self._check_and_emit_status_transitions(
+                _LOGGER.info(
+                    "SignalR '%s' for station %s (connectorId=%s): status='%s' (prev_status='%s', prev_connectorZero='%s')",
+                    target,
                     cp_id,
-                    new_status or cp_info.get("status"),
-                    error_code=_get_ci(first_arg, "errorCode"),
-                    error_charging=bool(_get_ci(first_arg, "errorCharging", default=False)),
-                    extra=first_arg,
+                    conn_id,
+                    new_status,
+                    cp_info.get("status"),
+                    cp_info.get("connectorZeroStatus"),
                 )
+
+                if new_status:
+                    if conn_id == 0:
+                        cp_info["connectorZeroStatus"] = new_status
+                    else:
+                        cp_info["status"] = new_status
+
+                if conn_id != 0:
+                    self._check_and_emit_status_transitions(
+                        cp_id,
+                        new_status or cp_info.get("status"),
+                        error_code=first_arg.get("errorCode"),
+                        error_charging=bool(first_arg.get("errorCharging", False)),
+                        extra=first_arg,
+                    )
                 self.async_set_updated_data(self.data)
 
             elif target in (

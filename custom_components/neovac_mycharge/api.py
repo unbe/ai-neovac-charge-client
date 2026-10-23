@@ -798,12 +798,26 @@ class NeoVacAsyncClient:
                         "target": "JoinConnectorAsync",
                         "arguments": [int(cp_id)],
                     }
+                    _LOGGER.info(
+                        "SignalR hub '%s': Subscribing to station %d via JoinConnectorAsync",
+                        hub_name,
+                        cp_id,
+                    )
                     await ws.send_str(json.dumps(sub_payload) + RECORD_SEPARATOR)
             elif hub_name == HUB_EVENTS:
-                # WebsocketBackendService subscribes to each site and connector
+                if not sites:
+                    _LOGGER.warning(
+                        "SignalR hub '%s' connected without any sites! Real-time status push events will NOT be delivered until sites are joined.",
+                        hub_name,
+                    )
                 for site in (sites or []):
                     site_id = site.get("siteId") or site.get("id")
                     if site_id:
+                        _LOGGER.info(
+                            "SignalR hub '%s': Subscribing to site '%s' via JoinChargePointSiteAsync",
+                            hub_name,
+                            site_id,
+                        )
                         await ws.send_str(
                             json.dumps({
                                 "type": 1,
@@ -813,9 +827,16 @@ class NeoVacAsyncClient:
                             + RECORD_SEPARATOR
                         )
                     for cp in site.get("userChargePoints", []) or []:
-                        serial = cp.get("serialNumber") or cp.get("chargePointSerialNumber") or cp.get("chargePointSerialNo")
+                        serial = cp.get("serialNumber")
                         conn_num = int(cp.get("connectorNumber", 1) or 1)
                         if site_id and serial:
+                            _LOGGER.info(
+                                "SignalR hub '%s': Subscribing to connector on site '%s', serial '%s', connector %d via JoinConnectorAsync",
+                                hub_name,
+                                site_id,
+                                serial,
+                                conn_num,
+                            )
                             await ws.send_str(
                                 json.dumps({
                                     "type": 1,
@@ -905,6 +926,12 @@ class NeoVacAsyncClient:
                         if msg_type == 1:  # Invocation
                             target = payload.get("target", "")
                             args = payload.get("arguments", [])
+                            _LOGGER.debug(
+                                "SignalR hub '%s' received invocation: target='%s', args_count=%d",
+                                hub_name,
+                                target,
+                                len(args),
+                            )
                             try:
                                 res = event_callback(target, args)
                                 if asyncio.iscoroutine(res):
