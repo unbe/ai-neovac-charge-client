@@ -18,7 +18,7 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .api import NeoVacApiError
-from .const import DOMAIN, STATUS_CHARGING
+from .const import DOMAIN, STATUS_CHARGING, canonical_status
 from .coordinator import NeoVacDataUpdateCoordinator, _get_ci
 from .entity import NeoVacEntity
 
@@ -47,7 +47,7 @@ SWITCH_DESCRIPTIONS: tuple[NeoVacSwitchEntityDescription, ...] = (
         icon="mdi:ev-station",
         entity_registry_visible_default=False,
         is_on_fn=lambda b: (
-            _get_ci(b.get("info", {}), "status", "connectorZeroStatus")
+            canonical_status(b.get("info", {}).get("status"))
             == STATUS_CHARGING
         ),
         turn_on_fn=lambda coord, cp_id: coord.client.async_start_charging(

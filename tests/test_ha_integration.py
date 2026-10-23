@@ -911,8 +911,8 @@ class TestNeoVacIntegration(unittest.IsolatedAsyncioTestCase):
                         }
                     ],
                 )
-                # Station status reflects SuspendedEVSE (EVSE hardware pause), connector 1 remains SuspendedEV
-                self.assertEqual(sensor_by_key["station_status"].native_value, "SuspendedEVSE")
+                # Station status and connector_status (connector 1) remain SuspendedEV; connector 0 is in attributes
+                self.assertEqual(sensor_by_key["station_status"].native_value, "SuspendedEV")
                 self.assertEqual(sensor_by_key["connector_status"].native_value, "SuspendedEV")
                 self.assertEqual(
                     sensor_by_key["station_status"].extra_state_attributes["connector_zero_status"],

@@ -24,9 +24,6 @@ from .const import (
     ALL_STATION_STATUSES,
     DOMAIN,
     STATUS_CHARGING,
-    STATUS_FAULTED,
-    STATUS_SUSPENDED_EVSE,
-    STATUS_UNAVAILABLE,
     STATUS_UNKNOWN,
     canonical_status,
 )
@@ -330,12 +327,7 @@ SENSOR_DESCRIPTIONS: tuple[NeoVacSensorEntityDescription, ...] = (
         options=ALL_STATION_STATUSES,
         icon="mdi:ev-station",
         value_fn=lambda coord, b: (
-            canonical_status(
-                b.get("info", {}).get("connectorZeroStatus")
-                if b.get("info", {}).get("connectorZeroStatus")
-                in (STATUS_SUSPENDED_EVSE, STATUS_FAULTED, STATUS_UNAVAILABLE)
-                else b.get("info", {}).get("status")
-            )
+            canonical_status(b.get("info", {}).get("status"))
         ),
         attr_fn=lambda coord, b: {
             "neovac_id": _get_ci(b.get("info", {}), "neoVacId"),
@@ -356,7 +348,7 @@ SENSOR_DESCRIPTIONS: tuple[NeoVacSensorEntityDescription, ...] = (
         options=ALL_STATION_STATUSES,
         icon="mdi:ev-plug-type2",
         value_fn=lambda coord, b: (
-            canonical_status(_get_ci(b.get("info", {}), "status", "connectorZeroStatus"))
+            canonical_status(b.get("info", {}).get("status"))
         ),
         attr_fn=lambda coord, b: {
             "connector_id": _get_ci(b.get("info", {}), "connectorNumber", default=1),

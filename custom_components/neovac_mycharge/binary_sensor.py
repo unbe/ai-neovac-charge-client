@@ -21,6 +21,7 @@ from .const import (
     PLUGGED_IN_STATUSES,
     STATUS_CHARGING,
     STATUS_FAULTED,
+    canonical_status,
     is_plugged_in_status,
 )
 from .coordinator import NeoVacDataUpdateCoordinator, _get_ci
@@ -50,7 +51,7 @@ BINARY_SENSOR_DESCRIPTIONS: tuple[NeoVacBinarySensorEntityDescription, ...] = (
         device_class=BinarySensorDeviceClass.PLUG,
         is_on_fn=lambda b: (
             is_plugged_in_status(
-                _get_ci(b.get("info", {}), "status", "connectorZeroStatus")
+                canonical_status(b.get("info", {}).get("status"))
             )
         ),
     ),
@@ -60,7 +61,7 @@ BINARY_SENSOR_DESCRIPTIONS: tuple[NeoVacBinarySensorEntityDescription, ...] = (
         name="Charging",
         device_class=BinarySensorDeviceClass.BATTERY_CHARGING,
         is_on_fn=lambda b: (
-            _get_ci(b.get("info", {}), "status", "connectorZeroStatus")
+            canonical_status(b.get("info", {}).get("status"))
             == STATUS_CHARGING
         ),
     ),

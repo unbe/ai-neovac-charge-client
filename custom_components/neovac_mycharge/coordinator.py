@@ -61,8 +61,10 @@ def _get_ci(data: dict[str, Any], *keys: str, default: Any = None) -> Any:
 
 
 def _extract_station_status(data: dict[str, Any]) -> str | None:
-    """Extracts station status directly from API payload without artificial synthesizing."""
-    raw = _get_ci(data, "ocppStatus", "status", "connectorZeroStatus", "connectorState", "statusUpdate")
+    """Extracts station status directly from API payload."""
+    if not isinstance(data, dict):
+        return None
+    raw = data.get("ocppStatus") or data.get("status")
     return canonical_status(raw) if raw else None
 
 
@@ -642,7 +644,6 @@ class NeoVacDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
                 if tx_status:
                     cp_info["status"] = tx_status
-                    cp_info["connectorZeroStatus"] = tx_status
 
                 self._live_transactions[cp_id] = live_tx
                 cp_bundle["live_transaction"] = live_tx
@@ -659,7 +660,6 @@ class NeoVacDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             elif target == "StartTransactionNotification":
                 st = _extract_station_status(first_arg) or STATUS_CHARGING
                 cp_info["status"] = st
-                cp_info["connectorZeroStatus"] = st
                 prev_st = self._previous_statuses.get(cp_id)
                 self._check_and_emit_status_transitions(cp_id, st, extra=first_arg)
                 if prev_st == st:
@@ -669,7 +669,6 @@ class NeoVacDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             elif target == "StopTransactionNotification":
                 st = _extract_station_status(first_arg) or STATUS_FINISHING
                 cp_info["status"] = st
-                cp_info["connectorZeroStatus"] = st
                 prev_st = self._previous_statuses.get(cp_id)
                 self._check_and_emit_status_transitions(cp_id, st, extra=first_arg)
                 if prev_st == st:
