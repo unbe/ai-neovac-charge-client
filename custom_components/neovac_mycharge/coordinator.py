@@ -477,7 +477,6 @@ class NeoVacDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self, target: str, arguments: list[Any]
     ) -> None:
         """Processes incoming real-time SignalR invocation messages."""
-        _LOGGER.info("SignalR event received: target='%s', arguments=%s", target, arguments)
         if not self.data:
             return
 
