@@ -1206,13 +1206,18 @@ class TestNeoVacIntegration(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(last_s["chargeQuantityInkWh"], 15.5)
         self.assertEqual(last_s["chargePriceInChf"], 4.5)
 
-        # 9. Test charging_power returns real API power even if station status is not "Charging"
+        # 9. Test charging_power returns currentPowerKw only when station status is "Charging"
         power_desc = next(d for d in sensor.SENSOR_DESCRIPTIONS if d.key == "charging_power")
+        bundle_charging = {
+            "info": {"status": "Charging"},
+            "live_transaction": {"currentPowerKw": 7.4},
+        }
+        self.assertEqual(power_desc.value_fn(coord, bundle_charging), 7.4)
         bundle_suspended = {
             "info": {"status": "SuspendedEV"},
             "live_transaction": {"currentPowerKw": 7.4},
         }
-        self.assertEqual(power_desc.value_fn(coord, bundle_suspended), 7.4)
+        self.assertEqual(power_desc.value_fn(coord, bundle_suspended), 0.0)
 
         # 10. Test last session and analytics return None when data is missing, not faked 0.0
         bundle_empty_last = {

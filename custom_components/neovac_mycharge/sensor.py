@@ -367,8 +367,8 @@ SENSOR_DESCRIPTIONS: tuple[NeoVacSensorEntityDescription, ...] = (
         suggested_display_precision=2,
         icon="mdi:flash",
         value_fn=lambda coord, b: (
-            float(_get_ci(b.get("live_transaction", {}), "currentPowerKw"))
-            if _get_ci(b.get("live_transaction", {}), "currentPowerKw") is not None
+            float(b.get("live_transaction", {}).get("currentPowerKw", 0.0))
+            if canonical_status(b.get("info", {}).get("status")) == STATUS_CHARGING
             else 0.0
         ),
     ),
