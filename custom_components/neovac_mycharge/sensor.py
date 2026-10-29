@@ -472,23 +472,13 @@ SENSOR_DESCRIPTIONS: tuple[NeoVacSensorEntityDescription, ...] = (
         key="electricity_tariff",
         translation_key="electricity_tariff",
         name="Electricity Tariff",
-        native_unit_of_measurement="CHF/kWh",
-        state_class=SensorStateClass.MEASUREMENT,
-        suggested_display_precision=3,
         icon="mdi:currency-chf",
         available_fn=lambda coord, b: (
             b.get("pricing") is not None
             or _get_ci(b.get("live_transaction", {}), "pricePerkWh") is not None
         ),
         value_fn=lambda coord, b: (
-            float(
-                _get_ci(b.get("live_transaction", {}), "pricePerkWh")
-                or _get_ci(
-                    b.get("pricing") or {},
-                    "defaultTariffPrice",
-                    "pricePerkWh",
-                )
-            )
+            f"{float(_get_ci(b.get('live_transaction', {}), 'pricePerkWh') or _get_ci(b.get('pricing') or {}, 'defaultTariffPrice', 'pricePerkWh')):.3f} CHF/kWh"
             if (
                 _get_ci(b.get("live_transaction", {}), "pricePerkWh") is not None
                 or _get_ci(b.get("pricing") or {}, "defaultTariffPrice", "pricePerkWh")
@@ -503,6 +493,23 @@ SENSOR_DESCRIPTIONS: tuple[NeoVacSensorEntityDescription, ...] = (
             "tariff_schedule": _get_ci(
                 b.get("pricing") or {}, "tariffTimeDetails", default=[]
             ),
+            "price_per_kwh": (
+                float(
+                    _get_ci(b.get("live_transaction", {}), "pricePerkWh")
+                    or _get_ci(
+                        b.get("pricing") or {},
+                        "defaultTariffPrice",
+                        "pricePerkWh",
+                    )
+                )
+                if (
+                    _get_ci(b.get("live_transaction", {}), "pricePerkWh") is not None
+                    or _get_ci(b.get("pricing") or {}, "defaultTariffPrice", "pricePerkWh")
+                    is not None
+                )
+                else None
+            ),
+            "unit": "CHF/kWh",
         },
     ),
     NeoVacSensorEntityDescription(
@@ -546,18 +553,10 @@ SENSOR_DESCRIPTIONS: tuple[NeoVacSensorEntityDescription, ...] = (
         key="last_session_energy",
         translation_key="last_session_energy",
         name="Last Session Energy",
-        device_class=SensorDeviceClass.ENERGY,
-        native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
-        suggested_display_precision=2,
         icon="mdi:history",
         available_fn=lambda coord, b: b.get("report") is not None,
         value_fn=lambda coord, b: (
-            float(
-                _get_ci(
-                    _get_last_session(b.get("report") or {}),
-                    "chargeQuantityInkWh",
-                )
-            )
+            f"{float(_get_ci(_get_last_session(b.get('report') or {}), 'chargeQuantityInkWh')):.2f} kWh"
             if (
                 _get_last_session(b.get("report") or {})
                 and _get_ci(
@@ -573,30 +572,38 @@ SENSOR_DESCRIPTIONS: tuple[NeoVacSensorEntityDescription, ...] = (
                 "chargeProcessEndTime",
                 "endTime",
             ),
+            "energy_kwh": (
+                float(
+                    _get_ci(
+                        _get_last_session(b.get("report") or {}),
+                        "chargeQuantityInkWh",
+                    )
+                )
+                if (
+                    _get_last_session(b.get("report") or {})
+                    and _get_ci(
+                        _get_last_session(b.get("report") or {}),
+                        "chargeQuantityInkWh",
+                    ) is not None
+                )
+                else None
+            ),
             "cost_chf": _get_ci(
                 _get_last_session(b.get("report") or {}), "chargePriceInChf"
             ),
             "rfid_tag": _get_ci(_get_last_session(b.get("report") or {}), "rfidTag"),
             "user_name": _get_ci(_get_last_session(b.get("report") or {}), "userName"),
+            "unit": "kWh",
         },
     ),
     NeoVacSensorEntityDescription(
         key="last_session_cost",
         translation_key="last_session_cost",
         name="Last Session Cost",
-        device_class=SensorDeviceClass.MONETARY,
-        native_unit_of_measurement="CHF",
-        suggested_display_precision=2,
         icon="mdi:receipt-text-clock",
         available_fn=lambda coord, b: b.get("report") is not None,
         value_fn=lambda coord, b: (
-            float(
-                _get_ci(
-                    _get_last_session(b.get("report") or {}),
-                    "chargePriceInChf",
-                    "totalPrice",
-                )
-            )
+            f"{float(_get_ci(_get_last_session(b.get('report') or {}), 'chargePriceInChf', 'totalPrice')):.2f} CHF"
             if (
                 _get_last_session(b.get("report") or {})
                 and _get_ci(
@@ -607,6 +614,27 @@ SENSOR_DESCRIPTIONS: tuple[NeoVacSensorEntityDescription, ...] = (
             )
             else None
         ),
+        attr_fn=lambda coord, b: {
+            "cost_chf": (
+                float(
+                    _get_ci(
+                        _get_last_session(b.get("report") or {}),
+                        "chargePriceInChf",
+                        "totalPrice",
+                    )
+                )
+                if (
+                    _get_last_session(b.get("report") or {})
+                    and _get_ci(
+                        _get_last_session(b.get("report") or {}),
+                        "chargePriceInChf",
+                        "totalPrice",
+                    ) is not None
+                )
+                else None
+            ),
+            "unit": "CHF",
+        },
     ),
     NeoVacSensorEntityDescription(
         key="last_session_end",

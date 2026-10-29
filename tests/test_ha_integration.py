@@ -795,10 +795,15 @@ class TestNeoVacIntegration(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(sensor_by_key["station_status"].native_value, "Available")
                 self.assertEqual(sensor_by_key["charging_power"].native_value, 0.0)
                 self.assertEqual(sensor_by_key["report_30d_energy"].native_value, 142.5)
-                self.assertEqual(sensor_by_key["last_session_energy"].native_value, 28.4)
-                self.assertEqual(sensor_by_key["electricity_tariff"].native_value, 0.28)
+                self.assertEqual(sensor_by_key["last_session_energy"].native_value, "28.40 kWh")
+                self.assertEqual(sensor_by_key["last_session_energy"].extra_state_attributes["energy_kwh"], 28.4)
+                self.assertIsNone(sensor_by_key["last_session_energy"].entity_description.device_class)
+                self.assertIsNone(sensor_by_key["last_session_energy"].entity_description.native_unit_of_measurement)
+                self.assertEqual(sensor_by_key["electricity_tariff"].native_value, "0.280 CHF/kWh")
+                self.assertEqual(sensor_by_key["electricity_tariff"].extra_state_attributes["price_per_kwh"], 0.28)
                 self.assertIsNone(sensor_by_key["electricity_tariff"].entity_description.device_class)
-                self.assertEqual(sensor_by_key["electricity_tariff"].entity_description.native_unit_of_measurement, "CHF/kWh")
+                self.assertIsNone(sensor_by_key["electricity_tariff"].entity_description.native_unit_of_measurement)
+                self.assertIsNone(sensor_by_key["electricity_tariff"].entity_description.state_class)
 
                 # Verify Home Assistant core rule: MONETARY device_class cannot use 'measurement' state_class or compound rate units
                 ha_sensor_mod = sys.modules["homeassistant.components.sensor"]
